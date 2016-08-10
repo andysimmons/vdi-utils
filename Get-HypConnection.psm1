@@ -3,8 +3,8 @@
 
 	Created on:   	8/9/2016 9:50 AM
 	Created by:   	Andy Simmons
-	Organization:	St. Luke's Health System
-	Filename:     	Get-HypConnection.ps1
+	URL:            https://github.com/andysimmons/vdi-utils
+	Filename:     	Get-HypConnection.psm1
 
 .SYNOPSIS
 	Creates the Get-HypConnection function (maybe more later), which returns HypervisorConnection 
@@ -13,22 +13,22 @@
 .DESCRIPTION
 	There's no Citrix cmdlet to return a HypervisorConnection object with any useable address info, 
 	if using vCenter/ESXi or SCVMM/Hyper-V. It's not usually desirable to bypass the Host service
-	to manipulate objects on the hosting platform, but can be helpful for reporting, or could be 
-	required in particular use cases.
+	to manipulate objects directly on the hosting platform, but can be helpful for reporting, and
+	if there's ever a need for direct interaction, this makes it easier.
 
-	HypervisorConnection objects returned by the Broker SDK (Get-BrokerHypervisorConnection) provide
-	name/UID that can be passed to this. There are various other places to see one of those two
-	values, which can then be passed to this, to see the addresses or other conection info.
+	HypervisorConnection objects returned by the Broker SDK (e.g. with Get-BrokerHypervisorConnection) 
+	provide at least a name and/or UID, and various Broker and Host SDK object properties reference them
+	as well. This just sucks those in and spits out the address.
 
 .PARAMETER AdminAddress
 	DDC Address
 
 .PARAMETER Connection
-	Optionally specify a connection by UID (preferred) or Name.
+	Optionally specify a connection, either by UID (preferred) or Name.
 
 .PARAMETER Parse
-	When used with -Connection, parse the hypervisor address and return it as a string. Tested 
-	with vCenter. Likely to work with all.
+	When used with -Connection, parse the hypervisor address(es) and return it as a string/string[]. 
+	Tested with vCenter, think it'll work with everything though.
 
 .EXAMPLE
 	Get-HypConnection -AdminAddress 'ddc01' -Connection 'vcenter connection' -Parse
