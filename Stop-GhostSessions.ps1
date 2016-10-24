@@ -39,7 +39,7 @@
 #Requires -PSSnapin Citrix.Broker.Admin.V2
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
 param(
-	[string[]]$DDCs = @('ctxddc01','sltctxddc01'),
+	[string[]]$DDCs = @('siteA-ddc01','siteB-ddc01'),
 	[int]$ConnectionTimeoutMinutes = 5,
 	[int]$MaxSessions = [Int32]::MaxValue
 )
