@@ -3,6 +3,7 @@
 	Name:    Stop-GhostSessions.ps1
 	Author:  Andy Simmons
 	Date:    10/24/2016
+	URL:     https://github.com/andysimmons/vdi-utils/blob/master/Stop-GhostSessions.ps1
 	Version: 1.0.0.0
 	Requirements: 
 		- Citrix Broker Admin snap-in
@@ -22,7 +23,7 @@
 	Citrix DDC(s) to use.
 
 .PARAMETER ConnectionTimeoutMinutes
-	The time (in minutes) a session is allowed to remain in a "Connected" state. This is where GPOs process, etc,
+	Duration (in minutes) a session is allowed to remain in a "Connected" state. This is where GPOs process, etc,
 	so anything over 1 minute is unusual in our environment.
 
 .PARAMETER MaxSessions
@@ -33,9 +34,11 @@
 	
 	This is the easiest way to see what this script does without any impact. It essentially runs the script against
 	our production VDI environment, reporting which actions would be taken against any ghosted sessions.
-.EXAMPLE
-	Stop-GhostSessions.ps1 -DDCs 'siteA_ddc1','siteA_ddc2','siteB_ddc1','siteB_ddc2'
 
+.EXAMPLE
+	Stop-GhostSessions.ps1 -DDCs 'siteA_ddc1','siteA_ddc2','siteB_ddc1','siteB_ddc2' -MaxSessions 10
+
+	This would pick one healthy DDC from each site, and kill off a maximum of 10 ghost sessions total.
 #>
 #Requires -PSSnapin Citrix.Broker.Admin.V2
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
@@ -148,8 +151,8 @@ Write-Verbose "$(Get-Date): Starting '$($MyInvocation.Line)'"
 Initialize-Dependencies
 
 # Validate DDCs (just want one per site, and need at least 1 to continue).
-$controllers = @(Get-HealthySiteControllers -DDCs $DDCs).Values
-if (!$controllers) {
+$controllers = @($(Get-HealthySiteControllers -DDCs $DDCs).Values)
+if (!$controllers.Length) {
 	throw 'No healthy DDCs found.'
 }
 
