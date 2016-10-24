@@ -5,9 +5,9 @@
 	Date:    10/24/2016
 	Version: 1.0.0.0
 	Requirements: 
-		- Citrix Broker admin PS snap-in
+		- Citrix Broker Admin snap-in
 		- User needs the following permissions on each Citrix site:
-			- View and stop sessions on all virtual desktops
+			- View session details on all virtual desktops
 			- Issue power actions to all virtual desktops
 .SYNOPSIS
 	Detects "ghost" (empty and stuck) VDI sessions and clears them out.
@@ -23,7 +23,7 @@
 
 .PARAMETER ConnectionTimeoutMinutes
 	The time (in minutes) a session is allowed to remain in a "Connected" state. This is where GPOs process, etc,
-	so anything over 1 minute is unusual.
+	so anything over 1 minute is unusual in our environment.
 
 .PARAMETER MaxSessions
 	Maximum number of sessions to kill off in a single pass.
@@ -32,14 +32,15 @@
 	Stop-GhostSessions.ps1 -WhatIf -Verbose
 	
 	This is the easiest way to see what this script does without any impact. It essentially runs the script against
-	our production VDI environment, reporting in detail which actions would be taken against any ghosted sessions.
+	our production VDI environment, reporting which actions would be taken against any ghosted sessions.
 .EXAMPLE
+	Stop-GhostSessions.ps1 -DDCs 'siteA_ddc1','siteA_ddc2','siteB_ddc1','siteB_ddc2'
 
 #>
 #Requires -PSSnapin Citrix.Broker.Admin.V2
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
 param(
-	[string[]]$DDCs = @('siteA-ddc01','siteB-ddc01'),
+	[string[]]$DDCs = @('ctxddc01','sltctxddc01'),
 	[int]$ConnectionTimeoutMinutes = 5,
 	[int]$MaxSessions = [Int32]::MaxValue
 )
@@ -49,10 +50,61 @@ param(
 
 # Load dependencies
 function Initialize-Dependencies {
+	[CmdletBinding()]
+	param()
+
 	Write-Verbose 'Loading Citrix Broker Admin Snap-In'
 	try   { Add-PSSnapin Citrix.Broker.Admin.V2 -ErrorAction Stop }
 	catch {	throw $_.Exception.Message }
 }
+
+# Loop through a list of DDCs, make sure the services we depend on are healthy, and grab exactly
+# one healthy DDC from each site.
+function Get-HealthySiteControllers {
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory)]
+		[string[]]$DDCs
+	)
+
+	$siteLookup = @{}
+	foreach ($candidate in $DDCs) {
+		
+		# Check service states
+		try   { $brokerStatus = (Get-BrokerServiceStatus -AdminAddress $candidate -ErrorAction Stop).ServiceStatus.ToString() }
+		catch { $brokerStatus = 'BROKER_OFFLINE' }
+		
+		try   { $hypStatus = (Get-HypServiceStatus -AdminAddress $candidate -ErrorAction Stop).ServiceStatus.ToString() }
+		catch { $hypStatus = 'HYPERVISOR_OFFLINE' }
+		
+		# Everything good? Make sure we don't already have a healthy DDC in this site...
+		if (($brokerStatus -eq 'OK') -and ($hypStatus -eq 'OK')) {
+			try   { $brokerSite = Get-BrokerSite -AdminAddress $candidate -ErrorAction Stop }
+			catch { $brokerSite = $null }
+			
+			if ($brokerSite) {
+				$siteUid = $brokerSite.BrokerServiceGroupUid
+				
+				if ($siteUid -notin $siteLookup.Keys) {
+					Write-Verbose "Using DDC $candidate for sessions in site $($brokerSite.Name)."
+					$siteLookup[$siteUid] = $candidate
+				}
+				else {
+					Write-Verbose "Already using $($siteLookup[$siteUid]) for site $($brokerSite.Name). Skipping $candidate."
+				}
+			}
+		}
+		# DDC is wonky. Skip it.
+		else {
+			$warnCount++
+			Write-Warning "DDC '$candidate' broker service status: $brokerStatus, hypervisor service status: $hypStatus. Skipping."
+		}
+	}
+
+	# Return the hashtable
+	$siteLookup
+}
+
 
 # Retrieve "ghost" sessions from a DDC
 function Get-GhostSessions {
@@ -95,8 +147,14 @@ function Get-GhostSessions {
 Write-Verbose "$(Get-Date): Starting '$($MyInvocation.Line)'"
 Initialize-Dependencies
 
+# Validate DDCs (just want one per site, and need at least 1 to continue).
+$controllers = @(Get-HealthySiteControllers -DDCs $DDCs).Values
+if (!$controllers) {
+	throw 'No healthy DDCs found.'
+}
+
 # Find ghost sessions
-$ghostSessions = @($DDCs | Get-GhostSessions -ConnectionTimeoutMinutes $ConnectionTimeoutMinutes) 
+$ghostSessions = @($controllers | Get-GhostSessions -ConnectionTimeoutMinutes $ConnectionTimeoutMinutes) 
 $totalGhosts   = $ghostSessions.Length
 $ghostSessions = $ghostSessions | Select-Object -First $MaxSessions
 
