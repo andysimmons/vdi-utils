@@ -172,7 +172,7 @@ if (!$controllers.Length) {
 }
 #endregion Init
 
-# Main
+#region Main
 #=========================================================================
 Write-Progress -Activity 'Finding ghost sessions' -Status $($controllers -join ', ')
 $ghostMachines = @($controllers | Get-GhostMachines -ConnectionTimeoutMinutes $ConnectionTimeoutMinutes) 
