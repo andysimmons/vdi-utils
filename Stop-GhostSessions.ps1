@@ -51,10 +51,10 @@ param
 	[Parameter(Mandatory)]
 	[string[]]$DDCs,
 	
-	[ValidateRange(0, [Int32]::MaxValue)]
+	[ValidateScript({$_ -ge 0})]
 	[int]$ConnectionTimeoutMinutes = 5,
 	
-	[ValidateRange(1, [Int32]::MaxValue)]
+	[ValidateScript({ $_ -ge 0 })]
 	[int]$MaxSessions = [Int32]::MaxValue
 )
 
@@ -149,7 +149,7 @@ function Get-GhostMachines
 		[string]$AdminAddress,
 		
 		[Parameter(Mandatory)]
-		[ValidateRange(0, [Int32]::MaxValue)]
+		[ValidateScript({ $_ -ge 0 })]
 		[int]$ConnectionTimeoutMinutes
 	)
 	
