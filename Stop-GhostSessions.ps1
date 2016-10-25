@@ -4,7 +4,7 @@
 	Author:  Andy Simmons
 	Date:    10/24/2016
 	URL:     https://github.com/andysimmons/vdi-utils/blob/master/Stop-GhostSessions.ps1
-	Version: 1.0.0.0
+	Version: 1.0.3
 	Requirements: 
 		- Citrix Broker Admin snap-in (installed w/ Citrix Studio)
 		- User needs the following permissions on each site/farm:
