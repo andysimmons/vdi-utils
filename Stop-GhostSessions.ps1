@@ -50,8 +50,9 @@ param(
 
 #region Functions
 #-----------------------------------------------------------------------------------------------
+function Initialize-Dependencies 
 # Load dependencies
-function Initialize-Dependencies {
+{
 	[CmdletBinding()]
 	param()
 
@@ -60,9 +61,10 @@ function Initialize-Dependencies {
 	catch {	throw $_.Exception.Message }
 }
 
+function Get-HealthyDDCs 
 # Loop through an array of Desktop Delivery Controller (DDC) names, make sure the services 
 # we'll be leveraging are responsive, and pick the first healthy DDC from each site.
-function Get-HealthyDDCs {
+{
 	[CmdletBinding()]
 	param(
 		[Parameter(Mandatory)]
@@ -108,8 +110,9 @@ function Get-HealthyDDCs {
 	$siteLookup.Values
 }
 
+function Get-GhostMachines 
 # Retrieve all broker machines bound to a single broken ("ghost") session
-function Get-GhostMachines {
+{
 	[CmdletBinding()]
 	param(
 		[Parameter(Mandatory, ValueFromPipeline)]
