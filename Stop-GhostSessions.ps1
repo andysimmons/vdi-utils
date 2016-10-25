@@ -205,7 +205,7 @@ foreach ($requiredSnapin in $requiredSnapins)
 
 if ($missingSnapinList)
 {
-	Write-Error -Category NotImplemented "Missing $($missingSnapinList -join ', ')"
+	Write-Error -Category NotImplemented -Message "Missing $($missingSnapinList -join ', ')"
 	exit 1
 }
 
@@ -213,7 +213,8 @@ Write-Verbose "Assessing DDCs: $($DDCs -join ', ')"
 $controllers = @(Get-HealthyDDCs -Candidates $DDCs)
 if (!$controllers.Length)
 {
-	throw 'No healthy DDCs found. Bailing out.'
+	Write-Error -Category ResourceUnavailable -Message 'No healthy DDCs found.'
+	exit 1
 }
 #endregion Init
 
