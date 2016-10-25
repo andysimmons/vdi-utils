@@ -140,20 +140,39 @@ function Get-GhostMachines {
 }
 #endregion Functions
 
-#region Main
+#region Init
 #=========================================================================
 Write-Verbose "$(Get-Date): Starting '$($MyInvocation.Line)'"
 
-Write-Verbose 'Loading Citrix Broker Admin Snap-In'
-try   { Add-PSSnapin Citrix.Broker.Admin.V2 -ErrorAction Stop }
-catch {	throw $_.Exception.Message }
+Write-Verbose 'Loading required Citrix snap-ins...'
+[Collections.ArrayList]$missingSnapinList = @()
+$requiredSnapins = @(
+	'Citrix.Host.Admin.V2',
+	'Citrix.Broker.Admin.V2'
+)
+
+foreach ($requiredSnapin in $requiredSnapins)
+{
+	Write-Verbose "Loading snap-in: $requiredSnapin"
+	try   { Add-PSSnapin -Name $requiredSnapin -ErrorAction Stop }
+	catch { $missingSnapinList.Add($requiredSnapin) > $null }
+}
+
+if ($missingSnapinList)
+{
+	Write-Error -Category NotImplemented "Missing $($missingSnapinList -join ', ')"
+	exit 1	
+}
 
 Write-Verbose "Assessing DDCs: $($DDCs -join ', ')"
 $controllers = @(Get-HealthyDDCs -Candidates $DDCs)
 if (!$controllers.Length) {
 	throw 'No healthy DDCs found. Bailing out.'
 }
+#endregion Init
 
+# Main
+#=========================================================================
 Write-Progress -Activity 'Finding ghost sessions' -Status $($controllers -join ', ')
 $ghostMachines = @($controllers | Get-GhostMachines -ConnectionTimeoutMinutes $ConnectionTimeoutMinutes) 
 $totalGhosts   = $ghostMachines.Length
