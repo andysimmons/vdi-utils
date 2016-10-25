@@ -40,7 +40,6 @@
 
 	Search for ghost sessions across multiple sites, and kill a maximum of 10 sessions total.
 #>
-#Requires -PSSnapin Citrix.Broker.Admin.V2
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
 param(
 	[Parameter(Mandatory)]
