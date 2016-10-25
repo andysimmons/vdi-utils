@@ -4,9 +4,9 @@
 	Author:  Andy Simmons
 	Date:    10/24/2016
 	URL:     https://github.com/andysimmons/vdi-utils/blob/master/Stop-GhostSessions.ps1
-	Version: 1.0.5
+	Version: 1.0.6
 	Requirements: 
-		- Citrix Broker and Host Admin snap-ins (installed w/ Citrix Studio)
+		- Citrix Broker Admin snap-in (installed w/ Citrix Studio)
 		- User needs the following permissions on each site/farm:
 			- View session details on all virtual desktops
 			- Issue power actions to all virtual desktops
@@ -125,6 +125,7 @@ function Get-GhostMachines {
 				AdminAddress   = $AdminAddress
 				SessionState   = 'Connected'
 				SessionSupport = 'SingleSession'
+				MaxRecordCount = ([Int32]::MaxValue)
 				Filter         = { SessionStateChangeTime -lt $cutoff }
 				ErrorAction    = 'Stop'
 			}
@@ -171,7 +172,7 @@ if (!$controllers.Length) {
 }
 #endregion Init
 
-#region Main
+# Main
 #=========================================================================
 Write-Progress -Activity 'Finding ghost sessions' -Status $($controllers -join ', ')
 $ghostMachines = @($controllers | Get-GhostMachines -ConnectionTimeoutMinutes $ConnectionTimeoutMinutes) 
