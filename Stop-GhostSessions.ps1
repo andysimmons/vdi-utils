@@ -45,7 +45,7 @@
 param(
 	[Parameter(Mandatory)]
 	[string[]]$DDCs,
-	
+
 	[int]$ConnectionTimeoutMinutes = 5,
 	
 	[int]$MaxSessions = [Int32]::MaxValue
@@ -180,7 +180,7 @@ if ($ghostMachines) {
 		$friendlyName = "$($ghostMachine.AdminAddress): $($ghostMachine.HostedMachineName)"
 		Write-Progress -Activity "Ghostbusting" -Status $friendlyName -PercentComplete $pctComplete
 		
-		# There's no native -WhatIf support on New-BrokerHostingPowerAction, so I'm adding my own.
+		# There's no native -WhatIf support on New-BrokerHostingPowerAction, so we'll add it here.
 		if ($PSCmdlet.ShouldProcess($friendlyName, 'Force Reset')) { 
 			try {
 				$forceResetParams = @{
@@ -207,10 +207,14 @@ if ($ghostMachines) {
 	$summary = "Ghost Sessions Found:   ${totalGhosts}`n"    +
 	           "Force Resets Attempted: ${attemptCounter}`n" +
 	           "Reset Tasks Queued:     ${stopCounter}`n"    +
-	           "Reset Tasks Failed:     ${failCounter}`n`n"  +
-	           "Note: These types of power actions are throttled. It may take a few minutes for these tasks to make it to the hosting platform.`n`n" +
+	           "Reset Tasks Failed:     ${failCounter}"
+
+	if ($attemptCounter) {
+		$summary += "`n`nNote: Power actions are throttled. It may take a few minutes for these tasks to make it to the hosting platform.`n`n" +
 	           'See the corresponding hosting connection(s) config in Citrix Studio for specific details.'
+	}
 }
+
 # No ghosts.
 else {
 	$summary = 'Nothing to do.'
