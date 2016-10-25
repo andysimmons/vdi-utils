@@ -6,51 +6,50 @@
 	URL:     https://github.com/andysimmons/vdi-utils/blob/master/Stop-GhostSessions.ps1
 	Version: 1.0.0.0
 	Requirements: 
-		- Citrix Broker Admin snap-in
-		- User needs the following permissions on each Citrix site:
+		- Citrix Broker Admin snap-in (installed w/ Citrix Studio)
+		- User needs the following permissions on each site/farm:
 			- View session details on all virtual desktops
 			- Issue power actions to all virtual desktops
 .SYNOPSIS
-	Detects "ghost" (empty and stuck) VDI sessions and clears them out.
+	Detects "ghost" VDI sessions and clears them out.
 
 .DESCRIPTION
-	Searches for sessions that have been in a "Connected" state > 5 mins and forcefully reboots them.
+	Searches for sessions that have been in a "Connected" state for an unreasonably long time, and forcefully
+	reboots the corresponding machines, provided the machine only supports a single session.
 
-	"Disconnected"" and "Active" are normal states, "Connected" is not in our environment (not for more than 
-	a few mintues, tops).
+	Working VDI sessions will normally either be "Disconnected" or "Active". Sessions that show "Connected" for more than
+	a minute or two are almost certainly broken (at least in our environment).
 
 .PARAMETER DDCs
 	Citrix DDC(s) to use.
 
 .PARAMETER ConnectionTimeoutMinutes
-	Duration (in minutes) a session is allowed to remain in a "Connected" state. This is where GPOs process, etc,
-	so anything over 1 minute is unusual in our environment.
+	Duration (in minutes) a session is allowed to remain in a "Connected" state, before we assume it's broken.
 
 .PARAMETER MaxSessions
 	Maximum number of sessions to kill off in a single pass.
 
 .EXAMPLE
-	Stop-GhostSessions.ps1 -WhatIf -Verbose
+	Stop-GhostSessions.ps1 -WhatIf -Verbose -DDCs 'yourddc1','yourddc2'
 	
 	This is the easiest way to see what this script does without any impact. It essentially runs the script against
-	our production VDI environment, reporting which actions would be taken against any ghosted sessions.
+	a production XenDesktop environment, reporting which actions would be taken against any ghost sessions.
 
 .EXAMPLE
-	Stop-GhostSessions.ps1 -DDCs 'siteA_ddc1','siteA_ddc2','siteB_ddc1','siteB_ddc2' -MaxSessions 10
+	Stop-GhostSessions.ps1 -DDCs 'siteA_ddc1','siteA_ddc2','siteB_ddc1','siteB_ddc2' -MaxSessions 10 -Verbose
 
-	This would pick one healthy DDC from each site, and kill off a maximum of 10 ghost sessions total.
+	Search for ghost sessions across multiple sites, and kill a maximum of 10 sessions total.
 #>
 #Requires -PSSnapin Citrix.Broker.Admin.V2
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
 param(
-	[string[]]$DDCs = @('ctxddc01','sltctxddc01'),
+	[string[]]$DDCs                = @('ctxddc01','sltctxddc01'),
 	[int]$ConnectionTimeoutMinutes = 5,
-	[int]$MaxSessions = [Int32]::MaxValue
+	[int]$MaxSessions              = [Int32]::MaxValue
 )
 
 #region Functions
 #-----------------------------------------------------------------------------------------------
-
 # Load dependencies
 function Initialize-Dependencies {
 	[CmdletBinding()]
@@ -61,17 +60,17 @@ function Initialize-Dependencies {
 	catch {	throw $_.Exception.Message }
 }
 
-# Loop through a list of DDCs, make sure the services we depend on are healthy, and grab exactly
-# one healthy DDC from each site.
-function Get-HealthySiteControllers {
+# Loop through an array of Desktop Delivery Controller (DDC) names, make sure the services 
+# we'll be leveraging are responsive, and pick the first healthy DDC from each site.
+function Get-HealthyDDCs {
 	[CmdletBinding()]
 	param(
 		[Parameter(Mandatory)]
-		[string[]]$DDCs
+		[string[]]$Candidates
 	)
 
 	$siteLookup = @{}
-	foreach ($candidate in $DDCs) {
+	foreach ($candidate in $Candidates) {
 		
 		# Check service states
 		try   { $brokerStatus = (Get-BrokerServiceStatus -AdminAddress $candidate -ErrorAction Stop).ServiceStatus.ToString() }
@@ -80,11 +79,12 @@ function Get-HealthySiteControllers {
 		try   { $hypStatus = (Get-HypServiceStatus -AdminAddress $candidate -ErrorAction Stop).ServiceStatus.ToString() }
 		catch { $hypStatus = 'HYPERVISOR_OFFLINE' }
 		
-		# Everything good? Make sure we don't already have a healthy DDC in this site...
+		# Everything good?
 		if (($brokerStatus -eq 'OK') -and ($hypStatus -eq 'OK')) {
 			try   { $brokerSite = Get-BrokerSite -AdminAddress $candidate -ErrorAction Stop }
 			catch { $brokerSite = $null }
 			
+			# We only want one healthy DDC per site
 			if ($brokerSite) {
 				$siteUid = $brokerSite.BrokerServiceGroupUid
 				
@@ -97,20 +97,19 @@ function Get-HealthySiteControllers {
 				}
 			}
 		}
+
 		# DDC is wonky. Skip it.
 		else {
-			$warnCount++
 			Write-Warning "DDC '$candidate' broker service status: $brokerStatus, hypervisor service status: $hypStatus. Skipping."
 		}
 	}
 
-	# Return the hashtable
-	$siteLookup
+	# Return the names of the healthy DDCs
+	$siteLookup.Values
 }
 
-
-# Retrieve "ghost" sessions from a DDC
-function Get-GhostSessions {
+# Retrieve all broker machines bound to a single broken ("ghost") session
+function Get-GhostMachines {
 	[CmdletBinding()]
 	param(
 		[Parameter(Mandatory, ValueFromPipeline)]
@@ -126,18 +125,19 @@ function Get-GhostSessions {
 
 	process {		
 		$ghostParams = @{
-			AdminAddress = $AdminAddress
-			SessionState = 'Connected'
-			Filter = { SessionStateChangeTime -lt $cutoff }
-			ErrorAction = 'Stop'
+			AdminAddress   = $AdminAddress
+			SessionState   = 'Connected'
+			SessionSupport = 'SingleSession'
+			Filter         = { SessionStateChangeTime -lt $cutoff }
+			ErrorAction    = 'Stop'
 		}
 
 		try {
-			Write-Verbose "Pulling ghost sessions from ${AdminAddress}..."
-			Get-BrokerSession @ghostParams | Select-Object -Property *,@{ n = 'AdminAddress'; e = {$AdminAddress} }
+			Write-Verbose "Pulling ghost session machines from ${AdminAddress}..."
+			Get-BrokerMachine @ghostParams | Select-Object -Property *,@{ n = 'AdminAddress'; e = {$AdminAddress} }
 		}
 		catch {
-			Write-Warning "Error querying ${AdminAddress} for ghosted sessions. Exception message:"
+			Write-Warning "Error querying ${AdminAddress} for ghost sessions. Exception message:"
 			Write-Warning $_.Exception.Message
 		}
 	}
@@ -146,71 +146,76 @@ function Get-GhostSessions {
 
 #region Main
 #-----------------------------------------------------------------------------------------------
-
 Write-Verbose "$(Get-Date): Starting '$($MyInvocation.Line)'"
 Initialize-Dependencies
 
 # Validate DDCs (just want one per site, and need at least 1 to continue).
-$controllers = @($(Get-HealthySiteControllers -DDCs $DDCs).Values)
+$controllers = @(Get-HealthyDDCs -Candidates $DDCs)
 if (!$controllers.Length) {
-	throw 'No healthy DDCs found.'
+	throw 'No healthy DDCs found. Bailing out.'
 }
 
-# Find ghost sessions
-$ghostSessions = @($controllers | Get-GhostSessions -ConnectionTimeoutMinutes $ConnectionTimeoutMinutes) 
-$totalGhosts   = $ghostSessions.Length
-$ghostSessions = $ghostSessions | Select-Object -First $MaxSessions
+# Look for ghosts ...
+$ghostMachines = @($controllers | Get-GhostMachines -ConnectionTimeoutMinutes $ConnectionTimeoutMinutes) 
+$totalGhosts   = $ghostMachines.Length
 
-# Initialize a few counters
-$i              = 0
-$attemptCounter = 0
-$stopCounter    = 0
-$failCounter    = 0
+# ... but not too many ghosts.
+$ghostMachines = @($ghostMachines | Select-Object -First $MaxSessions)
 
-# Any ghost sessions?
-if ($ghostSessions) {
-	"Killing off $($ghostSessions.Length) ghost sessions."
-	foreach ($ghostSession in $ghostSessions) {
+# Find any?
+if ($ghostMachines) {
+	$i              = 0
+	$attemptCounter = 0
+	$stopCounter    = 0
+	$failCounter    = 0
+
+	# Loop through our ghost machines and kill them off
+	foreach ($ghostMachine in $ghostMachines) {
 		$i++
-		$pctComplete = 100 * $i / [Math]::Max($ghostSessions.Length, 1)
-		$friendlyName = "$($ghostSession.AdminAddress): $($ghostSession.HostedMachineName)"
-		Write-Progress -Activity "Busting ghosts" -Status $friendlyName -PercentComplete $pctComplete
+		$pctComplete  = 100 * $i / $ghostMachines.Length
+		$friendlyName = "$($ghostMachine.AdminAddress): $($ghostMachine.HostedMachineName)"
+		Write-Progress -Activity "Ghostbusting" -Status $friendlyName -PercentComplete $pctComplete
 		
 		# There's no native -WhatIf support on New-BrokerHostingPowerAction, so we'll add it here.
 		if ($PSCmdlet.ShouldProcess($friendlyName, 'Force Reset')) {
-			$attemptCounter++
+			$forceResetParams = @{
+				Action       = 'Reset'
+				AdminAddress = $ghostMachine.AdminAddress
+				MachineName  = $ghostMachine.MachineName
+				ErrorAction  = 'Stop'
+			}
+
 			try {
-				$killParams = @{
-					Action = 'Reset'
-					AdminAddress = $ghostSession.AdminAddress
-					MachineName = $ghostSession.MachineName
-					ErrorAction = 'Stop'
-				}
-				New-BrokerHostingPowerAction @killParams > $null
+				New-BrokerHostingPowerAction @forceResetParams > $null
 				$stopCounter++
 			}
+
 			catch {
 				Write-Warning "Error restarting session '$friendlyName'. Exception message:"
 				Write-Warning $_.Exception.Message
 				$failCounter++
 			}
+
+			finally {
+				$attemptCounter++
+			}
 		}
 	}
 
-	"Attempted to stop ${attemptCounter} ghost sessions across $($DDCs.Length) DDC(s)."
-	if ($MaxSessions -lt ([int32]::MaxValue)) {
-		"Total Ghosts: ${totalGhosts}"
-		"Kill Limit:   ${MaxSessions}"
-	}
-	"Stopped:      ${stopCounter}"
-	"Failed:       ${failCounter}"
-	""
-	"Note: Hosting power actions are throttled."
-	"It may take a few minutes for these tasks to carry out. See XenDesktop hosting connection(s) configuration for details."
-}
-else {
-	"No ghosts found."
+	$summary = "Ghost Sessions Found:   ${totalGhosts}`n"            +
+	           "Force Resets Attempted: ${attemptCounter}`n"         +
+	           "Reset Tasks Queued:     ${stopCounter}`n"            +
+	           "Reset Tasks Failed:     ${failCounter}`n`n"          +
+	           "Note: These types of power actions are throttled. It may take a few minutes for these tasks to make it to the hosting platform.`n`n" +
+	           'See the corresponding hosting connection(s) config in Citrix Studio for specific details.'
 }
 
+else {
+	$summary = 'Nothing to do.'
+}
+
+# All done, spit out a summary.
+$summary
 Write-Verbose "$(Get-Date): Finished execution."
+
 #endregion Main
