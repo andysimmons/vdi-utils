@@ -43,7 +43,7 @@
 #Requires -PSSnapin Citrix.Broker.Admin.V2
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
 param(
-	[string[]]$DDCs                = @('ctxddc01','sltctxddc01'),
+	[string[]]$DDCs                = @('siteA_ddc1','siteA_ddc2'),
 	[int]$ConnectionTimeoutMinutes = 5,
 	[int]$MaxSessions              = [Int32]::MaxValue
 )
@@ -205,10 +205,10 @@ if ($ghostMachines) {
 		}
 	}
 
-	$summary = "Ghost Sessions Found:   ${totalGhosts}`n"            +
-	           "Force Resets Attempted: ${attemptCounter}`n"         +
-	           "Reset Tasks Queued:     ${stopCounter}`n"            +
-	           "Reset Tasks Failed:     ${failCounter}`n`n"          +
+	$summary = "Ghost Sessions Found:   ${totalGhosts}`n"    +
+	           "Force Resets Attempted: ${attemptCounter}`n" +
+	           "Reset Tasks Queued:     ${stopCounter}`n"    +
+	           "Reset Tasks Failed:     ${failCounter}`n`n"  +
 	           "Note: These types of power actions are throttled. It may take a few minutes for these tasks to make it to the hosting platform.`n`n" +
 	           'See the corresponding hosting connection(s) config in Citrix Studio for specific details.'
 }
@@ -217,7 +217,7 @@ else {
 	$summary = 'Nothing to do.'
 }
 
-# All done, spit out a summary.
+# All done.
 $summary
 Write-Verbose "$(Get-Date): Finished execution."
 
