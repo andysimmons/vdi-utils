@@ -4,7 +4,7 @@
 	Author:  Andy Simmons
 	Date:    10/24/2016
 	URL:     https://github.com/andysimmons/vdi-utils/blob/master/Stop-GhostSessions.ps1
-	Version: 1.0.3
+	Version: 1.0.4
 	Requirements: 
 		- Citrix Broker Admin snap-in (installed w/ Citrix Studio)
 		- User needs the following permissions on each site/farm:
@@ -52,22 +52,11 @@ param(
 )
 
 #region Functions
-#-----------------------------------------------------------------------------------------------
-function Initialize-Dependencies 
-# Load dependencies
-{
-	[CmdletBinding()]
-	param()
-
-	Write-Verbose 'Loading Citrix Broker Admin Snap-In'
-	try   { Add-PSSnapin Citrix.Broker.Admin.V2 -ErrorAction Stop }
-	catch {	throw $_.Exception.Message }
-}
-
-function Get-HealthyDDCs 
+#=========================================================================
 # Loop through an array of Desktop Delivery Controller (DDC) names, make sure the services 
 # we'll be leveraging are responsive, and pick the first healthy DDC from each site.
-{
+#-------------------------------------------------------------------------
+function Get-HealthyDDCs {
 	[CmdletBinding()]
 	param(
 		[Parameter(Mandatory)]
@@ -113,9 +102,9 @@ function Get-HealthyDDCs
 	$siteLookup.Values
 }
 
-function Get-GhostMachines 
 # Retrieve all broker machines bound to a single broken ("ghost") session
-{
+#-------------------------------------------------------------------------
+function Get-GhostMachines {
 	[CmdletBinding()]
 	param(
 		[Parameter(Mandatory, ValueFromPipeline)]
@@ -130,16 +119,18 @@ function Get-GhostMachines
 	}
 
 	process {		
-		$ghostParams = @{
-			AdminAddress   = $AdminAddress
-			SessionState   = 'Connected'
-			SessionSupport = 'SingleSession'
-			Filter         = { SessionStateChangeTime -lt $cutoff }
-			ErrorAction    = 'Stop'
-		}
-
 		try {
 			Write-Verbose "Pulling ghost session machines from ${AdminAddress}..."
+			
+			$ghostParams = @{
+				AdminAddress   = $AdminAddress
+				SessionState   = 'Connected'
+				SessionSupport = 'SingleSession'
+				Filter         = { SessionStateChangeTime -lt $cutoff }
+				ErrorAction    = 'Stop'
+			}
+			
+			# Return the ghosted machines after squirting in a custom 'AdminAddress' property we'll use later.
 			Get-BrokerMachine @ghostParams | Select-Object -Property *,@{ n = 'AdminAddress'; e = {$AdminAddress} }
 		}
 		catch {
@@ -151,22 +142,29 @@ function Get-GhostMachines
 #endregion Functions
 
 #region Main
-#-----------------------------------------------------------------------------------------------
+#=========================================================================
 Write-Verbose "$(Get-Date): Starting '$($MyInvocation.Line)'"
-Initialize-Dependencies
 
-# Validate DDCs (just want one per site, and need at least 1 to continue).
+Write-Verbose 'Loading Citrix Broker Admin Snap-In'
+try   { Add-PSSnapin Citrix.Broker.Admin.V2 -ErrorAction Stop }
+catch {	throw $_.Exception.Message }
+
+Write-Verbose "Assessing DDCs: $($DDCs -join ', ')"
 $controllers = @(Get-HealthyDDCs -Candidates $DDCs)
 if (!$controllers.Length) {
 	throw 'No healthy DDCs found. Bailing out.'
 }
 
-# Look for ghosts ...
+Write-Progress -Activity 'Finding ghost sessions' -Status $($controllers -join ', ')
 $ghostMachines = @($controllers | Get-GhostMachines -ConnectionTimeoutMinutes $ConnectionTimeoutMinutes) 
 $totalGhosts   = $ghostMachines.Length
 
-# ... but not too many ghosts.
-$ghostMachines = @($ghostMachines | Select-Object -First $MaxSessions)
+if ($MaxSessions -lt $totalGhosts) {
+	Write-Verbose "Found ${totalGhosts} total ghost sessions. Only killing the first ${MaxSessions}."
+	$ghostMachines = @($ghostMachines | Select-Object -First $MaxSessions)
+}
+Write-Progress -Activity 'Finding ghost sessions' -Completed
+
 
 # Find any?
 if ($ghostMachines) {
@@ -182,26 +180,24 @@ if ($ghostMachines) {
 		$friendlyName = "$($ghostMachine.AdminAddress): $($ghostMachine.HostedMachineName)"
 		Write-Progress -Activity "Ghostbusting" -Status $friendlyName -PercentComplete $pctComplete
 		
-		# There's no native -WhatIf support on New-BrokerHostingPowerAction, so we'll add it here.
-		if ($PSCmdlet.ShouldProcess($friendlyName, 'Force Reset')) {
-			$forceResetParams = @{
-				Action       = 'Reset'
-				AdminAddress = $ghostMachine.AdminAddress
-				MachineName  = $ghostMachine.MachineName
-				ErrorAction  = 'Stop'
-			}
-
+		# There's no native -WhatIf support on New-BrokerHostingPowerAction, so I'm adding my own.
+		if ($PSCmdlet.ShouldProcess($friendlyName, 'Force Reset')) { 
 			try {
+				$forceResetParams = @{
+					Action       = 'Reset'
+					AdminAddress = $ghostMachine.AdminAddress
+					MachineName  = $ghostMachine.MachineName
+					ErrorAction  = 'Stop'
+				}
+
 				New-BrokerHostingPowerAction @forceResetParams > $null
 				$stopCounter++
 			}
-
 			catch {
 				Write-Warning "Error restarting session '$friendlyName'. Exception message:"
 				Write-Warning $_.Exception.Message
 				$failCounter++
 			}
-
 			finally {
 				$attemptCounter++
 			}
@@ -215,13 +211,12 @@ if ($ghostMachines) {
 	           "Note: These types of power actions are throttled. It may take a few minutes for these tasks to make it to the hosting platform.`n`n" +
 	           'See the corresponding hosting connection(s) config in Citrix Studio for specific details.'
 }
-
+# No ghosts.
 else {
 	$summary = 'Nothing to do.'
 }
 
-# All done.
+# All done, spit out a summary.
 $summary
 Write-Verbose "$(Get-Date): Finished execution."
-
 #endregion Main
