@@ -69,16 +69,17 @@ param
 
 function Get-HealthyDDC
 {
-	<#
-	.SYNOPSIS
-		Finds healthy Desktop Delivery Controllers (DDCs) from a list of candidates.
+<#
+.SYNOPSIS
+	Finds healthy Desktop Delivery Controllers (DDCs) from a list of candidates.
 
-	.DESCRIPTION
-		Inspects each of the DDC names provided, verifies the services we'll be leveraging are responsive, and picks one healthy DDC per site.
+.DESCRIPTION
+	Inspects each of the DDC names provided, verifies the services we'll be leveraging are 
+	responsive, and picks one healthy DDC per site.
 
-	.PARAMETER Candidates
-		List of DDCs associated with one or more Citrix XenDesktop sites.
-	#>
+.PARAMETER Candidates
+	List of DDCs associated with one or more Citrix XenDesktop sites.
+#>
 	[CmdletBinding()]
 	[OutputType([string[]])]
 	param
@@ -136,21 +137,21 @@ function Get-HealthyDDC
 
 function Get-GhostMachine
 {
-	<#
-	.SYNOPSIS
-		Returns broker machines with a single ghost session.
+<#
+.SYNOPSIS
+	Returns broker machines with a single ghost session.
 
-	.DESCRIPTION
-		Searches for broker machines that support a single session, which
-		appear to currently be stuck in a "Connected" state.
+.DESCRIPTION
+	Searches for broker machines that support a single session, which
+	appear to currently be stuck in a "Connected" state.
 
-	.PARAMETER AdminAddress
-		Specifies the address of a XenDesktop controller.
+.PARAMETER AdminAddress
+	Specifies the address of a XenDesktop controller.
 
-	.PARAMETER ConnectionTimeoutMinutes
-		Duration (in minutes) a session is allowed to remain in a "Connected" 
-		state, before we assume it's broken.
-	#>
+.PARAMETER ConnectionTimeoutMinutes
+	Duration (in minutes) a session is allowed to remain in a "Connected" 
+	state, before we assume it's broken.
+#>
 	[CmdletBinding()]
 	[OutputType([PSCustomObject[]])]
 	param
@@ -246,7 +247,6 @@ if ($MaxSessions -lt $totalGhosts)
 }
 
 Write-Progress -Activity 'Finding ghost sessions' -Completed
-
 
 if ($ghostMachines)
 {
