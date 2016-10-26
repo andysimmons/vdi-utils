@@ -3,7 +3,6 @@
 	Name:    Stop-GhostSessions.ps1
 	Author:  Andy Simmons
 	Date:    10/24/2016
-	URL:     https://github.com/andysimmons/vdi-utils/blob/master/Stop-GhostSessions.ps1
 	Version: 1.0.7
 	Requirements:
 		- Citrix Broker and Host Admin snap-ins (installed w/ Citrix Studio)
@@ -23,7 +22,7 @@
 	Sessions that show "Connected" for more than a minute or two are almost 
 	certainly broken (at least in our environment).
 
-.PARAMETER DDCs
+.PARAMETER DDC
 	Desktop Delivery Controller name(s).
 
 .PARAMETER ConnectionTimeoutMinutes
@@ -33,42 +32,50 @@
 .PARAMETER MaxSessions
 	Maximum number of sessions to kill off in a single pass.
 
+.LINK
+	https://github.com/andysimmons/vdi-utils/blob/master/Stop-GhostSessions.ps1
+
 .EXAMPLE
-	Stop-GhostSessions.ps1 -WhatIf -Verbose -DDCs 'yourddc1','yourddc2'
+	Stop-GhostSessions.ps1 -WhatIf -Verbose -DDC 'yourddc1','yourddc2'
 	
 	This is the easiest way to see what this script does without any impact. It 
 	essentially runs the script against a production XenDesktop environment, 
 	reporting which actions would be taken against any ghost sessions.
 
 .EXAMPLE
-	Stop-GhostSessions.ps1 -DDCs 'siteA_ddc1','siteA_ddc2','siteB_ddc1','siteB_ddc2' -MaxSessions 10 -Verbose
+	Stop-GhostSessions.ps1 -DDC 'siteA_ddc1','siteA_ddc2','siteB_ddc1','siteB_ddc2' -MaxSessions 10 -Verbose
 	
 	Search for ghost sessions across multiple sites, and kill a maximum of 10 sessions total.
 #>
-[CmdletBinding(ConfirmImpact = 'Medium', SupportsShouldProcess)]
+[CmdletBinding(ConfirmImpact = 'Medium', SupportsShouldProcess = $true)]
 param
 (
-	[Parameter(Mandatory)]
-	[string[]]$DDCs,
-	
-	[ValidateScript({$_ -ge 0})]
-	[int]$ConnectionTimeoutMinutes = 5,
+	[Parameter(Mandatory = $true)]
+	[Alias('DDCs','AdminAddress')]
+	[string[]]
+	$DDC,
 	
 	[ValidateScript({ $_ -ge 0 })]
-	[int]$MaxSessions = [Int32]::MaxValue
+	[int]
+	$ConnectionTimeoutMinutes = 5,
+	
+	[ValidateScript({ $_ -ge 0 })]
+	[int]
+	$MaxSessions = ([Int32]::MaxValue)
 )
 
+
 #region Functions
-#-----------------------------------------------------------------------------------
-function Get-HealthyDDCs
+
+function Get-HealthyDDC
 {
 	<#
 	.SYNOPSIS
 		Finds healthy Desktop Delivery Controllers (DDCs) from a list of candidates.
-	
+
 	.DESCRIPTION
 		Inspects each of the DDC names provided, verifies the services we'll be leveraging are responsive, and picks one healthy DDC per site.
-	
+
 	.PARAMETER Candidates
 		List of DDCs associated with one or more Citrix XenDesktop sites.
 	#>
@@ -77,7 +84,8 @@ function Get-HealthyDDCs
 	param
 	(
 		[Parameter(Mandatory = $true)]
-		[string[]]$Candidates
+		[string[]]
+		$Candidates
 	)
 	
 	$siteLookup = @{ }
@@ -90,7 +98,7 @@ function Get-HealthyDDCs
 		try   { $hypStatus = (Get-HypServiceStatus -AdminAddress $candidate -ErrorAction Stop).ServiceStatus }
 		catch { $hypStatus = 'HYPERVISOR_OFFLINE' }
 		
-		# Everything good?
+		# If it's healthy, check the site ID.
 		if (($brokerStatus -eq 'OK') -and ($hypStatus -eq 'OK'))
 		{
 			try   { $brokerSite = Get-BrokerSite -AdminAddress $candidate -ErrorAction Stop }
@@ -106,6 +114,7 @@ function Get-HealthyDDCs
 					Write-Verbose "Using DDC $candidate for sessions in site $($brokerSite.Name)."
 					$siteLookup[$siteUid] = $candidate
 				}
+				
 				else
 				{
 					Write-Verbose "Already using $($siteLookup[$siteUid]) for site $($brokerSite.Name). Skipping $candidate."
@@ -113,30 +122,31 @@ function Get-HealthyDDCs
 			}
 		}
 		
-		# DDC is wonky. Skip it.
 		else
 		{
 			Write-Warning "DDC '$candidate' broker service status: $brokerStatus, hypervisor service status: $hypStatus. Skipping."
 		}
-	}
+	} # foreach
 	
-	# Return the names of the healthy DDCs
-	$siteLookup.Values
-}
+	# Return only the names of the healthy DDCs from our site lookup hashtable
+	Write-Output $siteLookup.Values
+	
+} # function
 
-function Get-GhostMachines
+
+function Get-GhostMachine
 {
 	<#
 	.SYNOPSIS
 		Returns broker machines with a single ghost session.
-	
+
 	.DESCRIPTION
 		Searches for broker machines that support a single session, which
 		appear to currently be stuck in a "Connected" state.
-	
+
 	.PARAMETER AdminAddress
 		Specifies the address of a XenDesktop controller.
-	
+
 	.PARAMETER ConnectionTimeoutMinutes
 		Duration (in minutes) a session is allowed to remain in a "Connected" 
 		state, before we assume it's broken.
@@ -145,17 +155,17 @@ function Get-GhostMachines
 	[OutputType([PSCustomObject[]])]
 	param
 	(
-		[Parameter(Mandatory, ValueFromPipeline)]
+		[Parameter(Mandatory = $true, ValueFromPipeline = $true)]
 		[string]$AdminAddress,
 		
-		[Parameter(Mandatory)]
+		[Parameter(Mandatory = $true)]
 		[ValidateScript({ $_ -ge 0 })]
 		[int]$ConnectionTimeoutMinutes
 	)
 	
 	begin
 	{
-		$cutoff = (Get-Date).AddMinutes(- $ConnectionTimeoutMinutes)
+		$cutoff = (Get-Date).AddMinutes(-$ConnectionTimeoutMinutes)
 	}
 	
 	process
@@ -180,13 +190,15 @@ function Get-GhostMachines
 		{
 			Write-Warning "Error querying ${AdminAddress} for ghost sessions. Exception message:"
 			Write-Warning $_.Exception.Message
-		}
-	}
-}
+		} # try
+	} # process
+} # function
+
 #endregion Functions
 
-#region Init
-#-----------------------------------------------------------------------------------
+
+#region Initialization
+
 Write-Verbose "$(Get-Date): Starting '$($MyInvocation.Line)'"
 
 Write-Verbose 'Loading required Citrix snap-ins...'
@@ -209,19 +221,22 @@ if ($missingSnapinList)
 	exit 1
 }
 
-Write-Verbose "Assessing DDCs: $($DDCs -join ', ')"
-$controllers = @(Get-HealthyDDCs -Candidates $DDCs)
+Write-Verbose "Assessing DDCs: $($DDC -join ', ')"
+$controllers = @(Get-HealthyDDC -Candidates $DDC)
 if (!$controllers.Length)
 {
 	Write-Error -Category ResourceUnavailable -Message 'No healthy DDCs found.'
 	exit 1
 }
-#endregion Init
+
+#endregion Initialization
+
 
 #region Main
-#-----------------------------------------------------------------------------------
+
 Write-Progress -Activity 'Finding ghost sessions' -Status $($controllers -join ', ')
-$ghostMachines = @($controllers | Get-GhostMachines -ConnectionTimeoutMinutes $ConnectionTimeoutMinutes)
+
+$ghostMachines = @($controllers | Get-GhostMachine -ConnectionTimeoutMinutes $ConnectionTimeoutMinutes)
 $totalGhosts   = $ghostMachines.Length
 
 if ($MaxSessions -lt $totalGhosts)
@@ -229,9 +244,10 @@ if ($MaxSessions -lt $totalGhosts)
 	Write-Verbose "Found ${totalGhosts} total ghost sessions. Only killing the first ${MaxSessions}."
 	$ghostMachines = @($ghostMachines | Select-Object -First $MaxSessions)
 }
+
 Write-Progress -Activity 'Finding ghost sessions' -Completed
 
-# Find any?
+
 if ($ghostMachines)
 {
 	$i = 0
@@ -239,7 +255,7 @@ if ($ghostMachines)
 	$stopCounter    = 0
 	$failCounter    = 0
 	
-	# Loop through our ghost machines and kill them off
+	# Loop through the ghosts, and force reset each one.
 	foreach ($ghostMachine in $ghostMachines)
 	{
 		$i++
@@ -262,18 +278,20 @@ if ($ghostMachines)
 				New-BrokerHostingPowerAction @forceResetParams > $null
 				$stopCounter++
 			}
+			
 			catch
 			{
 				Write-Warning "Error restarting session '$friendlyName'. Exception message:"
 				Write-Warning $_.Exception.Message
 				$failCounter++
 			}
+			
 			finally
 			{
 				$attemptCounter++
-			}
-		}
-	}
+			} # try
+		} # if
+	} # foreach
 	
 	$summary = "Ghost Sessions Found:   ${totalGhosts}`n"    +
 	           "Force Resets Attempted: ${attemptCounter}`n" +
@@ -286,15 +304,13 @@ if ($ghostMachines)
 		            "for these tasks to make it to the hosting platform.`n`n"           +
 		            'See the corresponding hosting connection(s) config in Citrix Studio for specific details.'
 	}
-}
+} # if  
 
-# No ghosts.
 else
 {
 	$summary = 'Nothing to do.'
 }
 
-# All done, spit out a summary.
-$summary
+Write-Output $summary
 Write-Verbose "$(Get-Date): Finished execution."
 #endregion Main
