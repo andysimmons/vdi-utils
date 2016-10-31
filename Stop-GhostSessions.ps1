@@ -3,7 +3,7 @@
 	Name:    Stop-GhostSessions.ps1
 	Author:  Andy Simmons
 	Date:    10/24/2016
-	Version: 1.0.7
+	Version: 1.0.8
 	Requirements:
 		- Citrix Broker and Host Admin snap-ins (installed w/ Citrix Studio)
 		- User needs the following permissions on each site/farm:
@@ -131,8 +131,7 @@ function Get-HealthyDDC
 	
 	# Return only the names of the healthy DDCs from our site lookup hashtable
 	Write-Output $siteLookup.Values
-	
-} # function
+}
 
 
 function Get-GhostMachine
@@ -191,9 +190,9 @@ function Get-GhostMachine
 		{
 			Write-Warning "Error querying ${AdminAddress} for ghost sessions. Exception message:"
 			Write-Warning $_.Exception.Message
-		} # try
+		}
 	} # process
-} # function
+}
 
 #endregion Functions
 
@@ -269,10 +268,10 @@ if ($ghostMachines)
 			try
 			{
 				$forceResetParams = @{
-					Action       = 'Reset'
-					AdminAddress = $ghostMachine.AdminAddress
-					MachineName  = $ghostMachine.MachineName
-					ErrorAction  = 'Stop'
+					Action        = 'Reset'
+					AdminAddress  = $ghostMachine.AdminAddress
+					MachineName   = $ghostMachine.MachineName
+					ErrorAction   = 'Stop'
 				}
 				
 				New-BrokerHostingPowerAction @forceResetParams > $null
@@ -289,7 +288,7 @@ if ($ghostMachines)
 			finally
 			{
 				$attemptCounter++
-			} # try
+			}
 		} # if
 	} # foreach
 	
@@ -304,7 +303,7 @@ if ($ghostMachines)
 		            "for these tasks to make it to the hosting platform.`n`n"           +
 		            'See the corresponding hosting connection(s) config in Citrix Studio for specific details.'
 	}
-} # if  
+}
 
 else
 {
