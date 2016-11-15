@@ -3,7 +3,7 @@
 	Name:    Stop-GhostSessions.ps1
 	Author:  Andy Simmons
 	Date:    10/24/2016
-	Version: 1.0.8
+	Version: 1.0.9
 	Requirements:
 		- Citrix Broker and Host Admin snap-ins (installed w/ Citrix Studio)
 		- User needs the following permissions on each site/farm:
@@ -237,7 +237,9 @@ if (!$controllers.Length)
 Write-Progress -Activity 'Finding ghost sessions' -Status $($controllers -join ', ')
 
 $ghostMachines = @($controllers | Get-GhostMachine -ConnectionTimeoutMinutes $ConnectionTimeoutMinutes)
-$totalGhosts   = $ghostMachines.Length
+$totalGhosts = $ghostMachines.Length
+
+
 
 if ($MaxSessions -lt $totalGhosts)
 {
@@ -253,6 +255,17 @@ if ($ghostMachines)
 	$attemptCounter = 0
 	$stopCounter    = 0
 	$failCounter    = 0
+	
+	$ghostDetails = $ghostMachines | Select-Object -Property AdminAddress,
+												   HostedMachineName,
+												   AgentVersion,
+												   SessionClientName,
+												   SessionLaunchedViaIP,
+												   LastConnectionUser,
+												   SessionStateChangeTime,
+												   LastConnectionTime,
+		                                           LastHostingUpdateTime | Format-Table -AutoSize | Out-String
+	Write-Verbose $ghostDetails
 	
 	# Loop through the ghosts, and force reset each one.
 	foreach ($ghostMachine in $ghostMachines)
@@ -312,4 +325,5 @@ else
 
 Write-Output $summary
 Write-Verbose "$(Get-Date): Finished execution."
+
 #endregion Main
