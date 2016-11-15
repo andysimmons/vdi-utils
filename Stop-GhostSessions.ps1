@@ -257,14 +257,14 @@ if ($ghostMachines)
 	$failCounter    = 0
 	
 	$ghostDetails = $ghostMachines | Select-Object -Property AdminAddress,
-												   HostedMachineName,
-												   AgentVersion,
-												   SessionClientName,
-												   SessionLaunchedViaIP,
-												   LastConnectionUser,
-												   SessionStateChangeTime,
-												   LastConnectionTime,
-		                                           LastHostingUpdateTime | Format-Table -AutoSize | Out-String
+	                                                         HostedMachineName,
+	                                                         AgentVersion,
+	                                                         SessionClientName,
+	                                                         SessionLaunchedViaIP,
+	                                                         LastConnectionUser,
+	                                                         SessionStateChangeTime,
+	                                                         LastConnectionTime,
+	                                                         LastHostingUpdateTime | Format-Table -AutoSize | Out-String
 	Write-Verbose $ghostDetails
 	
 	# Loop through the ghosts, and force reset each one.
