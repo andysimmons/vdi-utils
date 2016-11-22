@@ -71,32 +71,32 @@ param (
 	
 	[string]$NagTitle = 'RESTART REQUIRED',
 	
-	[string]$NagText = "Your system must be restarted to apply the latest Epic update.`n`n" +
-	                   "Please save your work, then click 'Start' -> 'Log Off', and then wait`n" +
-	                   'for the logoff operation to complete.',
+	[string]$NagText  = "Your system must be restarted to apply the latest Epic update.`n`n" +
+	                    "Please save your work, then click 'Start' -> 'Log Off', and then wait`n" +
+	                    'for the logoff operation to complete.',
 	
-	[string]$DeliveryGroup = "*",
+	[string]$DeliveryGroup       = "*",
 	
-	[string]$RegistryKey = 'HKLM:\System\CurrentControlSet\services\bnistack\PvsAgent',
+	[string]$RegistryKey         = 'HKLM:\System\CurrentControlSet\services\bnistack\PvsAgent',
 	
-	[string]$RegistryProperty = 'DiskName',
+	[string]$RegistryProperty    = 'DiskName',
 	
-	[regex]$AllVersionsPattern = "XD[BT]?P07GCD-\d{6}.vhd",
+	[regex]$AllVersionsPattern   = "XD[BT]?P07GCD-\d{6}.vhd",
 	
 	[regex]$TargetVersionPattern = "XD[BT]?P07GCD-161117.vhd",
 	
-	[int]$MaxSessionsPerSite = ([int32]::MaxValue),
+	[int]$MaxSessionsPerSite     = ([int32]::MaxValue),
 	
 	[int]$ThrottleLimit = 32,
 	
-	[int]$TimeOut = 120,
+	[int]$TimeOut       = 120,
 	
-	[int]$MaxHoursIdle = 2
+	[int]$MaxHoursIdle  = 2
 )
-$scriptStart = Get-Date
-$nagCounter = 0
-$nagFailCounter = 0
-$restartCounter = 0
+$scriptStart        = Get-Date
+$nagCounter         = 0
+$nagFailCounter     = 0
+$restartCounter     = 0
 $restartFailCounter = 0
 
 enum UpdateStatus {
@@ -115,6 +115,10 @@ enum ProposedAction {
 
 #region Functions
 
+<# 
+.SYNOPSIS
+	Generates a simple text header.
+#>
 function Out-Header
 {
 	[CmdletBinding()]
@@ -124,14 +128,15 @@ function Out-Header
 		
 		[switch]$Double
 	)
-	$strLine = $Header -replace ".", "-"
-	if ($Double)
+	begin 
 	{
-		return "`n$strLine`n$Header`n$strLine"
+		$line = $Header -replace ".", "-"
 	}
-	else
+
+	process 
 	{
-		return "`n$Header`n$strLine"
+		if ($Double) { "`n$line`n$Header`n$line" }
+		else         { "`n$Header`n$line" }
 	}
 }
 
