@@ -28,7 +28,7 @@ $homeFolderNames = (Get-ChildItem "\\home.slhs.org\home\" -ErrorAction Stop).Nam
         
 # Get members of the SLB and SLT VDI site-affinity groups (DN strings only, super fast)
 Write-Verbose "[$(Get-Date)] Retrieving VDI group membership..."
-$vdiMembers += (Get-ADGroup -Properties Members -Identity "VDI-SLBUser_GG_CX" -ErrorAction Stop).Members
+$vdiMembers = (Get-ADGroup -Properties Members -Identity "VDI-SLBUser_GG_CX" -ErrorAction Stop).Members
 $vdiMembers += (Get-ADGroup -Properties Members -Identity "VDI-SLTUser_GG_CX" -ErrorAction Stop).Members
 
 $summary = @"
