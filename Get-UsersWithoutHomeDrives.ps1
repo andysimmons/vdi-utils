@@ -16,12 +16,20 @@ if (Test-Path $OutFile)
 
 # Build some collections we can use to perform some analysis without re-querying remote resources again
 Write-Verbose "[$(Get-Date)] Querying AD users (this might take a minute)..."
-$generalUsers = Get-ADUser -SearchBase "OU=General Users,OU=Testing User GPOs,OU=SL1 Users,DC=SL1,DC=STLUKES-INT,DC=ORG" -Filter * 
-$contractors = Get-ADUser -SearchBase "OU=Contractors,OU=Testing User GPOs,OU=SL1 Users,DC=SL1,DC=STLUKES-INT,DC=ORG" -Filter * } > $null
 
-Write-Verbose "[$(Get-Date)] Enumerating home drives..."
-$homeFolderNames = (Get-ChildItem "\\home.slhs.org\home\" -ErrorAction Stop).Name
-        
+# Run the long/slow queries in parallel (as background jobs)
+Get-Job -Name "HOMECHECK*" | Remove-Job -Force
+Start-Job -Name 'HOMECHECK-GeneralUsers' { Get-ADUser -SearchBase "OU=General Users,OU=Testing User GPOs,OU=SL1 Users,DC=SL1,DC=STLUKES-INT,DC=ORG" -Filter * } > $null
+Start-Job -Name 'HOMECHECK-Contractors' { Get-ADUser -SearchBase "OU=Contractors,OU=Testing User GPOs,OU=SL1 Users,DC=SL1,DC=STLUKES-INT,DC=ORG" -Filter * } > $null
+Start-Job -Name 'HOMECHECK-HomeDirs' { (Get-ChildItem "\\home.slhs.org\home\" -ErrorAction Stop).Name } > $null
+
+# Once the jobs finish, stuff the results into a few collections, and remove the jobs
+Get-Job -Name "HOMECHECK*" | Wait-Job
+$generalUsers = Receive-Job -Name 'HOMECHECK-GeneralUsers'
+$contractors = Receive-Job -Name 'HOMECHECK-Contractors'
+$homeFolderNames = Receive-Job -Name 'HOMECHECK-HomeDirs'
+Get-Job -Name "HOMECHECK*" | Remove-Job
+
 # Get members of the SLB and SLT VDI site-affinity groups (DN strings only, super fast)
 Write-Verbose "[$(Get-Date)] Retrieving VDI group membership..."
 $vdiMembers = (Get-ADGroup -Properties Members -Identity "VDI-SLBUser_GG_CX" -ErrorAction Stop).Members
