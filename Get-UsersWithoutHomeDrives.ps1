@@ -16,12 +16,8 @@ if (Test-Path $OutFile)
 
 # Build some collections we can use to perform some analysis without re-querying remote resources again
 Write-Verbose "[$(Get-Date)] Querying AD users (this might take a minute)..."
-
-# Run the long/slow AD queries in parallel (as background jobs)
-Get-Job -Name "HOMECHECK*" | Remove-Job -Force
-Start-Job -Name 'HOMECHECK-GeneralUsers' { $generalUsers = Get-ADUser -SearchBase "OU=General Users,OU=Testing User GPOs,OU=SL1 Users,DC=SL1,DC=STLUKES-INT,DC=ORG" -Filter * } > $null
-Start-Job -Name 'HOMECHECK-Contractors' { $contractors = Get-ADUser -SearchBase "OU=Contractors,OU=Testing User GPOs,OU=SL1 Users,DC=SL1,DC=STLUKES-INT,DC=ORG" -Filter * } > $null
-Get-Job -Name "HOMECHECK*" | Wait-Job | Remove-Job
+$generalUsers = Get-ADUser -SearchBase "OU=General Users,OU=Testing User GPOs,OU=SL1 Users,DC=SL1,DC=STLUKES-INT,DC=ORG" -Filter * 
+$contractors = Get-ADUser -SearchBase "OU=Contractors,OU=Testing User GPOs,OU=SL1 Users,DC=SL1,DC=STLUKES-INT,DC=ORG" -Filter * } > $null
 
 Write-Verbose "[$(Get-Date)] Enumerating home drives..."
 $homeFolderNames = (Get-ChildItem "\\home.slhs.org\home\" -ErrorAction Stop).Name
