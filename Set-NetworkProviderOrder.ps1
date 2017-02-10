@@ -6,7 +6,7 @@
     Filename:     Set-NetworkProviderOrder
 
 .SYNOPSIS
-	Moves one of the network provider registry entries to the front of the line.
+    Moves one of the network provider registry entries to the front of the line.
 
 .DESCRIPTION
     Not sure if this will fix anything, but it'll make a diagnostic pass for one
