@@ -3,7 +3,7 @@
     Created on:   2/10/2017
     Created by:   Andy Simmons
     Organization: St. Luke's Health System
-    Filename:     Set-NetworkProviderOrder
+    Filename:     Set-NetworkProviderOrder.ps1
 
 .SYNOPSIS
     Moves one of the network provider registry entries to the front of the line.
