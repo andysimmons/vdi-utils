@@ -79,7 +79,16 @@ if ($elements -contains $PriorityElement)
     # Overriding the native Set-ItemProperty -WhatIf/-Confirm behavior to make the intention clear.
     if ($PSCmdlet.ShouldProcess("${RegistryKey}\${KeyProperty}", "Sort Elements"))
     {
-        Set-ItemProperty -Path $RegistryKey -Name $KeyProperty -Value $newValue -Force -PassThru -WhatIf:$false
+        $setItemParams = @{
+            Path     = $RegistryKey
+            Name     = $KeyProperty
+            Value    = $newValue
+            Force    = $true
+            PassThru = $true
+            WhatIf   = $false
+            Confirm  = $false
+        }
+        Set-ItemProperty @setItemParams
     }
 }
 
