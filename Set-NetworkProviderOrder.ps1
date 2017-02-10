@@ -1,16 +1,19 @@
 <#	
 .NOTES
-	 Created on:   	2/10/2017
-	 Created by:   	Andy Simmons
-	 Organization: 	St. Luke's Health System
-	 Filename:      Set-NetworkProviderOrder.ps1
+    Created on:   2/10/2017
+    Created by:   Andy Simmons
+    Organization: St. Luke's Health System
+    Filename:     Set-NetworkProviderOrder
 
 .SYNOPSIS
 	Moves one of the network provider registry entries to the front of the line.
 
 .DESCRIPTION
-	Not sure if this will fix anything, but it'll make a diagnostic pass for one
+    Not sure if this will fix anything, but it'll make a diagnostic pass for one
     of our vendors, so we can continue troubleshooting accordingly.
+
+.LINK
+    https://github.com/andysimmons/vdi-utils/blob/master/Set-NetworkProviderOrder.ps1
 
 .PARAMETER RegistryKey
     Path to the registry key where the network provider order is defined.
@@ -22,13 +25,13 @@
     Specifies the element (provider) that should be moved to the front of the list.
 
 .EXAMPLE
-	Set-NetworkProviderOrder.ps1 -WhatIf -Verbose
+    Set-NetworkProviderOrder.ps1 -WhatIf -Verbose
 
     Explains what would happen if the script were run with the default parameters, but
     does not make any changes.
 
 .EXAMPLE
-	Set-NetworkProviderOrder.ps1
+    Set-NetworkProviderOrder.ps1
 
     Runs the script with the default parameters, and attempts to sort elements accordingly.
 #>
@@ -43,7 +46,7 @@ param(
 
 Write-Verbose "Looking for registry key: ${RegistryKey}..."
 if (!(Test-Path $RegistryKey))
-{    
+{
     Write-Error -Category ObjectNotFound "Couldn't find registry key '${RegistryKey}'. Aborting."
     exit 1
 }
@@ -69,7 +72,7 @@ if ($elements -contains $PriorityElement)
     $elements.Remove($PriorityElement)
     $elements.Insert(0, $PriorityElement)
     $newValue = $elements -join ','
-    
+
     Write-Verbose "Current Order: $currentValue"
     Write-Verbose "Correct Order: $newValue"
 
