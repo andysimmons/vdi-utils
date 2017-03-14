@@ -29,7 +29,7 @@
     The desired disk mode (usually 'Persistent').
 
 .EXAMPLE
-    Set-DiskMode.ps1 -VIServer ('slbvdivc2','sltvdivc2') -VMPattern 'XD[BT]D07UNITST\d{2}' -TargetMode 'Persistent' -Location 'Non-Persistent VDI Desktops'
+    Set-DiskMode.ps1 -VIServer ('slbvdivc2','sltvdivc2') -VMPattern 'XD[BT][PNDT]\d{2}' -TargetMode 'Persistent' -Location 'Non-Persistent VDI Desktops'
 
     This would find all virtual machines within either slbvdivc2 or sltvdivc2 inventories, nested somewhere inside the location specified,
     matching the pattern specified, and attempt to set the disk mode to 'Persistent' (which is implicitly dependent) on all powered-off VMs.
@@ -40,7 +40,7 @@ param(
     $VIServer = ('slbvdivc2','sltvdivc2'),
 
     [regex]
-    $VMPattern = "XD[BT]D07UNITST\d{2}",
+    $VMPattern = "XD[BT][PNDT]\d{2}",
 
     [Parameter(Mandatory)]
     [ValidateSet('Persistent','IndependentPersistent','IndependentNonPersistent')]
@@ -63,16 +63,26 @@ Write-Verbose "Getting '${VMPattern}' VMs..."
 $vms = Get-VM -Location $viContainers | Where-Object {$_.Name -match $VMPattern}
 $fixableVMs = @($vms | Where-Object {$_.PowerState -eq 'PoweredOff'})
 
+# If any of those VMs are powered off, find and remediate any misconfigured disks.
 if ($fixableVMs.Count -gt 0)
 {
-    Get-HardDisk -VM $fixableVMs | Set-HardDisk -Persistence $TargetMode
+    Write-Verbose "Found $($fixableVMs.Count) powered-off VMs. Checking for misconfigured vDisks..."
+    $fixableDisks = @(Get-HardDisk -VM $fixableVMs | Where-Object {$_.Persistence -ne $TargetMode}) 
+ 
+    Write-Verbose "Fixing $($fixableDisks.Count) misconfigured vDisks..."
+    $fixableDisks | Set-HardDisk -Persistence $TargetMode
 }
 
+# Summarize anything we might have misseed due to VM power state.
 $unfixableVMs = @($vms | Where-Object {$_.PowerState -eq 'PoweredOn'})
 $unfixableDisks = @(Get-HardDisk -VM $unfixableVMs | Where-Object {$_.Persistence -ne $TargetMode})
 
 if ($unfixableDisks.Count -gt 0)
 {
-    Write-Warning "Couldn't attempt remediation on $($unfixableDisks.Count) mis-configured disks, because the parent VM is currently powered-on."
-    $unfixableDisks | Select-Object Parent,Name,CapacityGB,Persistence,FileName | Format-Table -AutoSize | Out-String | Write-Warning
+    Write-Warning "Couldn't attempt remediation on $($unfixableDisks.Count) misconfigured vDisks, because the parent VM is currently powered-on."
+    $unfixableDisks | 
+        Select-Object Parent,Name,CapacityGB,Persistence,FileName | 
+        Format-Table -AutoSize | 
+        Out-String | 
+        Write-Warning
 }
