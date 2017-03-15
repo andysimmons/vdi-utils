@@ -28,6 +28,12 @@
 .PARAMETER TargetMode
     The desired disk mode (usually 'Persistent').
 
+.PARAMETER MaxBatchSize
+    Maximum number of machines to change at once.
+
+.PARAMETER IncludeStragglerDetail
+    Generates a report after the script runs with details about stragglers (can be slow).
+
 .EXAMPLE
     Set-DiskMode.ps1 -VIServer ('slbvdivc2','sltvdivc2') -VMPattern 'XD[BT][PNDT]\d{2}' -TargetMode 'Persistent' -Location 'Non-Persistent VDI Desktops'
 
@@ -48,7 +54,13 @@ param(
     $TargetMode,
 
     [string]
-    $Location = "Non-Persistent VDI Desktops"
+    $Location = "Non-Persistent VDI Desktops",
+
+    [int]
+    $MaxBatchSize = [int]::MaxValue, 
+
+    [switch]
+    $IncludeStragglerDetail
 )
 
 Add-PSSnapin VMWare.VimAutomation.Core -ErrorAction Stop
@@ -67,22 +79,31 @@ $fixableVMs = @($vms | Where-Object {$_.PowerState -eq 'PoweredOff'})
 if ($fixableVMs.Count -gt 0)
 {
     Write-Verbose "Found $($fixableVMs.Count) powered-off VMs. Checking for misconfigured vDisks..."
-    $fixableDisks = @(Get-HardDisk -VM $fixableVMs | Where-Object {$_.Persistence -ne $TargetMode}) 
- 
+    $fixableDisks = @(Get-HardDisk -VM $fixableVMs | Where-Object {$_.Persistence -ne $TargetMode})  
+    
+    if ($fixableDisks.Count -gt $MaxBatchSize) 
+    {
+        $fixableSurplus = $fixableDisks.Count - $MaxBatchSize
+        Write-Warning "Found $($fixableDisks.Count) misconfigured disks in powered-off VMs, which is greater"
+        Write-Warning "than the max allowed batch size of ${MaxBatchSize}. Skipping ${fixableSurplus} VMs."
+        $fixableDisks = $fixableDisks | Select-Object -First $MaxBatchSize
+    }
+
     Write-Verbose "Fixing $($fixableDisks.Count) misconfigured vDisks..."
-    $fixableDisks | Set-HardDisk -Persistence $TargetMode
+    $fixableDisks | Set-HardDisk -Persistence $TargetMode 
 }
 
-# Summarize anything we might have misseed due to VM power state.
+# Summarize anything we might have missed due to VM power state.
 $unfixableVMs = @($vms | Where-Object {$_.PowerState -eq 'PoweredOn'})
 $unfixableDisks = @(Get-HardDisk -VM $unfixableVMs | Where-Object {$_.Persistence -ne $TargetMode})
 
 if ($unfixableDisks.Count -gt 0)
 {
     Write-Warning "Couldn't attempt remediation on $($unfixableDisks.Count) misconfigured vDisks, because the parent VM is currently powered-on."
-    $unfixableDisks | 
-        Select-Object Parent,Name,CapacityGB,Persistence,FileName | 
-        Format-Table -AutoSize | 
-        Out-String | 
-        Write-Warning
+    
+    if ($IncludeStragglerDetail)
+    {
+        Write-Verbose "Generating straggler details... this might take a bit."
+        $unfixableDisks | Select-Object Parent,Name,CapacityGB,Persistence,FileName | Format-Table | Out-String | Write-Warning
+    }
 }
