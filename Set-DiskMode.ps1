@@ -23,7 +23,7 @@
     Regular expression used to match virtual machine names.
 
 .PARAMETER Location
-    Any parent VIContainer entity.
+    VM folder name to use as the search root.
 
 .PARAMETER TargetMode
     The desired disk mode (usually 'Persistent').
@@ -54,7 +54,7 @@ param(
     $TargetMode,
 
     [string]
-    $Location = "Non-Persistent VDI Desktops",
+    $Location = 'Non-Persistent VDI Desktops',
 
     [int]
     $MaxBatchSize = [int]::MaxValue, 
