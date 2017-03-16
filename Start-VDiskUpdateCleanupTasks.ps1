@@ -204,10 +204,6 @@ function Get-VDiskInfo
 .SYNOPSIS
     Determines the update status of a given vDisk.
 
-.DESCRIPTION
-    Takes a list of computer names, checks which vDisk each one is currently running,
-    and returns a hashtable with the results.
-
 .PARAMETER AllVersionsPattern
     A pattern matching the naming convention for ANY version of the vDisk being updated.
 
