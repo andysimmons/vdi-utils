@@ -76,7 +76,13 @@
     Start-VDiskUpdateCleanupTasks.ps1 -AdminAddress ctxddc01,sltctxddc01,ctxddc02,sltctxddc02 -Verbose -DeliveryGroup "XD*T07GCD" -Confirm:$false
 
     This would invoke the script against both of our VDI sites, targeting only the test delivery groups,
-    and bypass confirmation prompts for any recommended actions
+    and bypass confirmation prompts for any recommended actions.
+
+.EXAMPLE
+    Start-VDiskUpdateCleanupTasks.ps1 -AdminAddress ctxddc01,ctxddc02,sltctxddc01,sltctxddc02 -Verbose -DeliveryGroup "*PVS Shared Desktop" -MaxActionsTaken 10
+
+    This would invoke the script against both of our sites, targeting any Delivery Groups ending with the string "PVS Shared Desktop",
+    and perform actions (with confirmation prompts) against a maximum of 10 machines/sessions total.
 #>
 #Requires -Version 5
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
@@ -562,7 +568,7 @@ else
 
         if ($oldAvailableMachines)
         {
-            Write-Warning "There are still at least $($oldAvailableMachines.Count) outdated and avaialble machines reported by $($controller.ToUpper())."
+            Write-Warning "There are still at least $($oldAvailableMachines.Count) outdated and available machines reported by $($controller.ToUpper())."
             Write-Warning 'Skipping session analysis until available machines are all up-to-date.'
             $sessions = @()
         }
