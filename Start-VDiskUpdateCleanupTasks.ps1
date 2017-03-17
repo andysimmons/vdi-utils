@@ -16,7 +16,7 @@
     One or more delivery controllers.
 
 .PARAMETER SearchScope
-    Specifies which types of machines are in scope:
+    Specifies which types of machines are in scope.
 
         AvailableMachines:
             Limit search to machines in an "Available" state.
@@ -166,7 +166,6 @@ enum ProposedAction
 
 .PARAMETER ComputerName
     The NetBIOS name, the IP address, or the fully qualified domain name of one or more computers.
-
 #>
 function Get-VDiskInfo
 {
@@ -231,12 +230,13 @@ function Get-UpdateStatus
         [regex]$TargetVersionPattern
     )
 
+    # If we know the vDisk name
     if ($DiskName)
     {
         # and it's a vDisk we're updating
         if ($DiskName -match $AllVersionsPattern)
         {
-            # See if we're on the target version
+            # see if we're on the target version.
             if ($DiskName -match $TargetVersionPattern)
             {
                 $updateStatus = [UpdateStatus]::UpdateCompleted
@@ -246,7 +246,7 @@ function Get-UpdateStatus
                 $updateStatus = [UpdateStatus]::RestartRequired
             }
         }
-        # this vDisk isn't in scope
+        # we aren't trying to update this vDisk.
         else
         {
             $updateStatus = [UpdateStatus]::Ineligible
@@ -266,6 +266,12 @@ function Get-UpdateStatus
 <#
 .SYNOPSIS
     Generates a simple text header.
+
+.PARAMETER Header
+    Header text.
+
+.PARAMETER Double
+    Displays header text with both under and overlines.
 #>
 function Out-Header
 {
@@ -280,8 +286,20 @@ function Out-Header
     process
     {
         $line = $Header -replace '.', '-'
-        if ($Double) { "`n$line`n$Header`n$line" }
-        else         { "`n$Header`n$line" }
+
+        if ($Double) 
+        { 
+            ''
+            $line
+            $Header
+            $line 
+        }
+        else 
+        { 
+            ''
+            $Header
+            $line
+        }
     }
 }
 
@@ -398,7 +416,7 @@ function Get-HealthyDDC
         # If it's healthy, check the site ID.
         if (($brokerStatus -eq 'OK') -and ($hypStatus -eq 'OK'))
         {
-            try { $brokerSite = Get-BrokerSite -AdminAddress $candidate -ErrorAction Stop }
+            try   { $brokerSite = Get-BrokerSite -AdminAddress $candidate -ErrorAction Stop }
             catch { $brokerSite = $null }
 
             # We only want one healthy DDC per site
@@ -444,7 +462,7 @@ $requiredSnapins = @(
 foreach ($requiredSnapin in $requiredSnapins)
 {
     Write-Verbose "Loading snap-in: $requiredSnapin"
-    try { Add-PSSnapin -Name $requiredSnapin -ErrorAction Stop }
+    try   { Add-PSSnapin -Name $requiredSnapin -ErrorAction Stop }
     catch { $missingSnapinList.Add($requiredSnapin) > $null }
 }
 
@@ -465,20 +483,22 @@ if (!$controllers.Length)
 
 
 #region Analysis
-$analysisStart = Get-Date
 
 # Loop through the eligible controllers (one per site), analyze the AVAILABLE MACHINES on each to see
 # what automated action should be taken, and store that report in a collection.
 if ($SearchScope -eq 'MachinesWithSessions')
 {
     # We're just targeting sessions this run, skip the available machine analysis.
-    $availableReport = @()
+    $availableMachineReport = @()
 }
 else
 {
-    [array]$availableReport = foreach ($controller in $controllers)
+    [array]$availableMachineReport = foreach ($controller in $controllers)
     {
+        $analysisStart = Get-Date 
+
         Write-Verbose "Analyzing available machines' vDisks on $($controller.ToUpper()) (this may take a minute)..."
+        Write-Progress -Activity 'Pulling available machine list' -Status $controller
 
         $availableParams = @{
             AdminAddress     = $controller
@@ -487,9 +507,8 @@ else
             SummaryState     = 'Available'
             MaxRecordCount   = $MaxRecordCount
         }
-
-        Write-Progress -Activity 'Pulling available machine list' -Status $controller
         $availableMachines = Get-BrokerMachine @availableParams
+
         Write-Progress -Activity 'Pulling available machine list' -Completed
 
         if ($availableMachines)
@@ -529,13 +548,13 @@ else
 
                 # Summarize this machine
                 [pscustomobject]@{
-                    HostedMachineName      = $availableMachine.HostedMachineName
-                    DiskName               = $vDisk
-                    UpdateStatus           = $updateStatus
-                    ProposedAction         = $proposedAction
-                    SummaryState           = $availableMachine.SummaryState
-                    Uid                    = $availableMachine.Uid
-                    AdminAddress           = $controller.ToUpper()
+                    HostedMachineName = $availableMachine.HostedMachineName
+                    DiskName          = $vDisk
+                    UpdateStatus      = $updateStatus
+                    ProposedAction    = $proposedAction
+                    SummaryState      = $availableMachine.SummaryState
+                    Uid               = $availableMachine.Uid
+                    AdminAddress      = $controller.ToUpper()
                 }
             }
         }
@@ -546,10 +565,10 @@ else
         $elapsed = [int]((Get-Date) - $analysisStart).TotalSeconds
         Write-Verbose "Completed $($controller.ToUpper()) machine analysis in ${elapsed} seconds."
     }
-    if ($availableReport)
+    if ($availableMachineReport)
     {
         Out-Header -Header 'Available Machine Summary' -Double
-        $availableReport | Format-Table -AutoSize
+        $availableMachineReport | Format-Table -AutoSize
     }
 }
 
@@ -564,7 +583,9 @@ else
     # automated action should be taken, and store that report in a collection.
     [array]$sessionReport = foreach ($controller in $controllers)
     {
-        $oldAvailableMachines = @($availableReport | Where-Object { ($_.AdminAddress -eq $controller) -and ($_.ProposedAction -eq 'Restart') })
+        $analysisStart = Get-Date
+
+        $oldAvailableMachines = @($availableMachineReport | Where-Object { ($_.AdminAddress -eq $controller) -and ($_.ProposedAction -eq 'Restart') })
 
         if ($oldAvailableMachines)
         {
@@ -574,7 +595,7 @@ else
         }
         else
         {
-              Write-Verbose "Analyzing sessions and vDisks on $($controller.ToUpper()) (this may take a minute)..."
+            Write-Verbose "Analyzing sessions and vDisks on $($controller.ToUpper()) (this may take a minute)..."
 
             $sessionParams = @{
                 AdminAddress     = $controller
@@ -611,9 +632,10 @@ else
                 # Propose an action based on update status
                 switch ($updateStatus)
                 {
-                    'RestartRequired' {
+                    'RestartRequired'
+                    {
                         $isInactive = $session.SessionState -ne 'Active'
-                        $hasntChangedInAWhile = $session.SessionStateChangeTime -lt (Get-Date).AddHours(-$MaxHoursIdle)
+                        $hasntChangedInAWhile = $session.SessionStateChangeTime -lt (Get-Date).AddHours( - $MaxHoursIdle)
 
                         if ($isInactive -and $hasntChangedInAWhile)
                         {
@@ -622,7 +644,7 @@ else
                         }
                         else
                         {
-                            # Needs a restart, but they could be using it
+                            # Needs a restart, but they could be using it (it's either active, or was recently active)
                             $proposedAction = [ProposedAction]::Nag
                         }
                     }
@@ -666,16 +688,16 @@ else
 
 #region Actions
 # Restart available outdated machines
-foreach ($availableInfo in $availableReport)
+foreach ($availableMachineInfo in $availableMachineReport)
 {
-    switch ($availableInfo.ProposedAction)
+    switch ($availableMachineInfo.ProposedAction)
     {
         'Restart'
         {
             # Make sure the machine is still available before we reboot it.
             $refreshParams = @{
-                AdminAddress = $availableInfo.AdminAddress
-                HostedMachineName = $availableInfo.HostedMachineName
+                AdminAddress      = $availableMachineInfo.AdminAddress
+                HostedMachineName = $availableMachineInfo.HostedMachineName
             }
             $currentMachine = Get-BrokerMachine @refreshParams
 
@@ -687,10 +709,10 @@ foreach ($availableInfo in $availableReport)
             {
                 if (($restartCounter + $nagCounter) -lt $MaxActionsTaken)
                 {
-                    if ($PSCmdlet.ShouldProcess("$($availableInfo.HostedMachineName) (Available: No Session)", 'RESTART MACHINE'))
+                    if ($PSCmdlet.ShouldProcess("$($availableMachineInfo.HostedMachineName) (Available: No Session)", 'RESTART MACHINE'))
                     {
                         $restartParams = @{
-                            AdminAddress = $availableInfo.AdminAddress
+                            AdminAddress = $availableMachineInfo.AdminAddress
                             MachineName  = $currentMachine.MachineName
                             Action       = 'Restart'
                             ErrorAction  = 'Stop'
@@ -735,9 +757,9 @@ foreach ($sessionInfo in $sessionReport)
                     {
                         $restartParams = @{
                             AdminAddress = $sessionInfo.AdminAddress
-                            MachineName  = $currentSession.MachineName
-                            Action       = 'Restart'
-                            ErrorAction  = 'Stop'
+                            MachineName = $currentSession.MachineName
+                            Action = 'Restart'
+                            ErrorAction = 'Stop'
                         }
                         try
                         {
@@ -752,21 +774,19 @@ foreach ($sessionInfo in $sessionReport)
                         $restartCounter++
                     }
                 }
-            } # if inactive
-
+            } 
             # It's active now, we'll nag instead.
             else
             {
                 if (($restartCounter + $nagCounter) -lt $MaxActionsTaken)
                 {
                     $nagParams = @{
-                        AdminAddress      = $sessionInfo.AdminAddress
+                        AdminAddress = $sessionInfo.AdminAddress
                         HostedMachineName = $sessionInfo.HostedMachineName
-                        SessionUID        = $sessionInfo.Uid
-                        Title             = $NagTitle
-                        Text              = $NagText
+                        SessionUID = $sessionInfo.Uid
+                        Title = $NagTitle
+                        Text = $NagText
                     }
-                    Send-Nag @nagParams
                 }
             }
         } # 'Restart'
@@ -776,11 +796,11 @@ foreach ($sessionInfo in $sessionReport)
             if (($restartCounter + $nagCounter) -lt $MaxActionsTaken)
             {
                 $nagParams = @{
-                    AdminAddress      = $sessionInfo.AdminAddress
+                    AdminAddress = $sessionInfo.AdminAddress
                     HostedMachineName = $sessionInfo.HostedMachineName
-                    SessionUID        = $sessionInfo.Uid
-                    Title             = $NagTitle
-                    Text              = $NagText
+                    SessionUID = $sessionInfo.Uid
+                    Title = $NagTitle
+                    Text = $NagText
                 }
                 Send-Nag @nagParams
             }
@@ -795,9 +815,11 @@ foreach ($sessionInfo in $sessionReport)
 
 foreach ($property in 'UpdateStatus', 'ProposedAction', 'DiskName')
 {
-    Out-Header -Header $property
-    $sessionReport + $availableReport | Group-Object -Property $property -NoElement |
-        Select-Object -Property Count,@{ n = $property; e = { $_.Name } } |
+    Out-Header -Header $property 
+
+    $sessionReport + $availableMachineReport | 
+        Group-Object -Property $property -NoElement |
+        Select-Object -Property Count, @{ n = $property; e = { $_.Name } } |
         Sort-Object -Property 'Count' -Descending |
         Format-Table -HideTableHeaders
 }
