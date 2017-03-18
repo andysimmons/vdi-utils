@@ -560,7 +560,7 @@ else
                     AllVersionsPattern   = $AllVersionsPattern
                     DiskName             = $vDisk
                 }
-                
+
                 $updateStatus = Get-UpdateStatus @statusParams
 
                 # Propose an action based on update status
@@ -665,8 +665,8 @@ else
 
                 $statusParams = @{
                     TargetVersionPattern = $TargetVersionPattern
-                    AllVersionsPattern = $AllVersionsPattern
-                    DiskName = $vDisk
+                    AllVersionsPattern   = $AllVersionsPattern
+                    DiskName             = $vDisk
                 }
 
                 $updateStatus = Get-UpdateStatus @statusParams
@@ -700,14 +700,14 @@ else
 
                 # Summarize this session
                 [pscustomobject]@{
-                    HostedMachineName = $session.HostedMachineName
-                    DiskName = $vDisk
-                    UpdateStatus = $updateStatus
-                    ProposedAction = $proposedAction
-                    SessionState = $session.SessionState
+                    HostedMachineName      = $session.HostedMachineName
+                    DiskName               = $vDisk
+                    UpdateStatus           = $updateStatus
+                    ProposedAction         = $proposedAction
+                    SessionState           = $session.SessionState
                     SessionStateChangeTime = $session.SessionStateChangeTime
-                    Uid = $session.Uid
-                    AdminAddress = $controller.ToUpper()
+                    Uid                    = $session.Uid
+                    AdminAddress           = $controller.ToUpper()
                 }
             }
         }
