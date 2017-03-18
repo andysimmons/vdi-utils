@@ -391,11 +391,11 @@ function Send-Nag
 
         $nagParams = @{
             AdminAddress = $AdminAddress
-            InputObject = $session
-            Title = $Title
-            Text = $Text
+            InputObject  = $session
+            Title        = $Title
+            Text         = $Text
             MessageStyle = $MessageStyle
-            ErrorAction = 'Stop'
+            ErrorAction  = 'Stop'
         }
 
         try
@@ -437,16 +437,16 @@ function Get-HealthyDDC
     foreach ($candidate in $Candidates)
     {
         # Check service states
-        try { $brokerStatus = (Get-BrokerServiceStatus -AdminAddress $candidate -ErrorAction Stop).ServiceStatus }
+        try   { $brokerStatus = (Get-BrokerServiceStatus -AdminAddress $candidate -ErrorAction Stop).ServiceStatus }
         catch { $brokerStatus = 'BROKER_OFFLINE' }
 
-        try { $hypStatus = (Get-HypServiceStatus -AdminAddress $candidate -ErrorAction Stop).ServiceStatus }
+        try   { $hypStatus = (Get-HypServiceStatus -AdminAddress $candidate -ErrorAction Stop).ServiceStatus }
         catch { $hypStatus = 'HYPERVISOR_OFFLINE' }
 
         # If it's healthy, check the site ID.
         if (($brokerStatus -eq 'OK') -and ($hypStatus -eq 'OK'))
         {
-            try { $brokerSite = Get-BrokerSite -AdminAddress $candidate -ErrorAction Stop }
+            try   { $brokerSite = Get-BrokerSite -AdminAddress $candidate -ErrorAction Stop }
             catch { $brokerSite = $null }
 
             # We only want one healthy DDC per site
@@ -492,7 +492,7 @@ $requiredSnapins = @(
 foreach ($requiredSnapin in $requiredSnapins)
 {
     Write-Verbose "Loading snap-in: $requiredSnapin"
-    try { Add-PSSnapin -Name $requiredSnapin -ErrorAction Stop }
+    try   { Add-PSSnapin -Name $requiredSnapin -ErrorAction Stop }
     catch { $missingSnapinList.Add($requiredSnapin) > $null }
 }
 
@@ -521,6 +521,7 @@ if ($SearchScope -eq 'MachinesWithSessions')
     # We're just targeting sessions this run, skip the available machine analysis.
     $availableMachineReport = @()
 }
+
 else
 {
     [array]$availableMachineReport = foreach ($controller in $controllers)
@@ -531,12 +532,13 @@ else
         Write-Progress -Activity 'Pulling available machine list' -Status $controller
 
         $availableParams = @{
-            AdminAddress = $controller
+            AdminAddress     = $controller
             DesktopGroupName = $DeliveryGroup
-            DesktopKind = 'Shared'
-            SummaryState = 'Available'
-            MaxRecordCount = $MaxRecordCount
+            DesktopKind      = 'Shared'
+            SummaryState     = 'Available'
+            MaxRecordCount   = $MaxRecordCount
         }
+
         $availableMachines = Get-BrokerMachine @availableParams
 
         Write-Progress -Activity 'Pulling available machine list' -Completed
@@ -550,14 +552,15 @@ else
             # Now we can loop through the sessions and handle them accordingly
             foreach ($availableMachine in $availableMachines)
             {
-                try { $vDisk = $vDiskLookup[$availableMachine.HostedMachineName] }
+                try   { $vDisk = $vDiskLookup[$availableMachine.HostedMachineName] }
                 catch { $vDisk = $null }
 
                 $statusParams = @{
                     TargetVersionPattern = $TargetVersionPattern
-                    AllVersionsPattern = $AllVersionsPattern
-                    DiskName = $vDisk
+                    AllVersionsPattern   = $AllVersionsPattern
+                    DiskName             = $vDisk
                 }
+                
                 $updateStatus = Get-UpdateStatus @statusParams
 
                 # Propose an action based on update status
@@ -579,25 +582,27 @@ else
                 # Summarize this machine
                 [pscustomobject]@{
                     HostedMachineName = $availableMachine.HostedMachineName
-                    DiskName = $vDisk
-                    UpdateStatus = $updateStatus
-                    ProposedAction = $proposedAction
-                    SummaryState = $availableMachine.SummaryState
-                    Uid = $availableMachine.Uid
-                    AdminAddress = $controller.ToUpper()
+                    DiskName          = $vDisk
+                    UpdateStatus      = $updateStatus
+                    ProposedAction    = $proposedAction
+                    SummaryState      = $availableMachine.SummaryState
+                    Uid               = $availableMachine.Uid
+                    AdminAddress      = $controller.ToUpper()
                 }
             }
         }
+
         else
         {
             Write-Verbose "No available machines found on $($controller.ToUpper())."
         }
+
         $elapsed = [int]((Get-Date) - $analysisStart).TotalSeconds
         Write-Verbose "Completed $($controller.ToUpper()) machine analysis in ${elapsed} seconds."
     }
     if ($availableMachineReport)
     {
-        Out-Header -Header 'Available Machine Summary' -Double
+        'Available Machine Summary' | Out-Header -Double
         $availableMachineReport | Format-Table -AutoSize
     }
 }
@@ -626,19 +631,21 @@ else
             Write-Warning 'Skipping session analysis until available machines are all up-to-date.'
             $sessions = @()
         }
+
         else
         {
             Write-Verbose "Analyzing sessions and vDisks on $($controller.ToUpper()) (this may take a minute)..."
+            Write-Progress -Activity 'Pulling session list' -Status $controller
 
             $sessionParams = @{
-                AdminAddress = $controller
+                AdminAddress     = $controller
                 DesktopGroupName = $DeliveryGroup
-                DesktopKind = 'Shared'
-                MaxRecordCount = $MaxRecordCount
+                DesktopKind      = 'Shared'
+                MaxRecordCount   = $MaxRecordCount
             }
 
-            Write-Progress -Activity 'Pulling session list' -Status $controller
             $sessions = Get-BrokerSession @sessionParams
+
             Write-Progress -Activity 'Pulling session list' -Completed
         }
 
@@ -648,10 +655,12 @@ else
 
             $vDiskLookup = Get-VDiskInfo -ComputerName $sessions.HostedMachineName -TimeOut $TimeOut
 
+            Write-Progress -Activity "Querying $($sessions.Length) desktops for vDisk information (${TimeOut} sec timeout)." -Completed
+            
             # Now we can loop through the sessions and handle them accordingly
             foreach ($session in $sessions)
             {
-                try { $vDisk = $vDiskLookup[$session.HostedMachineName] }
+                try   { $vDisk = $vDiskLookup[$session.HostedMachineName] }
                 catch { $vDisk = $null }
 
                 $statusParams = @{
@@ -730,15 +739,17 @@ foreach ($availableMachineInfo in $availableMachineReport)
         {
             # Make sure the machine is still available before we reboot it.
             $refreshParams = @{
-                AdminAddress = $availableMachineInfo.AdminAddress
+                AdminAddress      = $availableMachineInfo.AdminAddress
                 HostedMachineName = $availableMachineInfo.HostedMachineName
             }
+
             $currentMachine = Get-BrokerMachine @refreshParams
 
             if ($currentMachine.SummaryState -ne 'Available')
             {
                 Write-Warning "$($currentMachine.HostedMachineName) is no longer available ($($currentMachine.SummaryState)). Skipping."
             }
+
             else
             {
                 if (($restartCounter + $nagCounter) -lt $MaxActionsTaken)
@@ -747,21 +758,21 @@ foreach ($availableMachineInfo in $availableMachineReport)
                     {
                         $restartParams = @{
                             AdminAddress = $availableMachineInfo.AdminAddress
-                            MachineName = $currentMachine.MachineName
-                            Action = 'Restart'
-                            ErrorAction = 'Stop'
+                            MachineName  = $currentMachine.MachineName
+                            Action       = 'Restart'
+                            ErrorAction  = 'Stop'
                         }
+
                         try
                         {
                             New-BrokerHostingPowerAction @restartParams > $null
+                            $restartCounter++
                         }
                         catch
                         {
                             Write-Warning $_.Exception.Message
                             $restartFailCounter++
                         }
-
-                        $restartCounter++
                     }
                 }
             }
@@ -778,9 +789,10 @@ foreach ($sessionInfo in $sessionReport)
         {
             # Verify it's still inactive before restarting
             $refreshParams = @{
-                AdminAddress = $sessionInfo.AdminAddress
+                AdminAddress      = $sessionInfo.AdminAddress
                 HostedMachineName = $sessionInfo.HostedMachineName
             }
+
             $currentSession = Get-BrokerSession @refreshParams
 
             if ($currentSession.SessionState -ne 'Active')
@@ -791,35 +803,36 @@ foreach ($sessionInfo in $sessionReport)
                     {
                         $restartParams = @{
                             AdminAddress = $sessionInfo.AdminAddress
-                            MachineName = $currentSession.MachineName
-                            Action = 'Restart'
-                            ErrorAction = 'Stop'
+                            MachineName  = $currentSession.MachineName
+                            Action       = 'Restart'
+                            ErrorAction  = 'Stop'
                         }
+
                         try
                         {
                             New-BrokerHostingPowerAction @restartParams > $null
+                            $restartCounter++
                         }
                         catch
                         {
                             Write-Warning $_.Exception.Message
                             $restartFailCounter++
                         }
-
-                        $restartCounter++
                     }
                 }
             } 
+
             # It's active now, we'll nag instead.
             else
             {
                 if (($restartCounter + $nagCounter) -lt $MaxActionsTaken)
                 {
                     $nagParams = @{
-                        AdminAddress = $sessionInfo.AdminAddress
+                        AdminAddress      = $sessionInfo.AdminAddress
                         HostedMachineName = $sessionInfo.HostedMachineName
-                        SessionUID = $sessionInfo.Uid
-                        Title = $NagTitle
-                        Text = $NagText
+                        SessionUID        = $sessionInfo.Uid
+                        Title             = $NagTitle
+                        Text              = $NagText
                     }
                 }
             }
@@ -830,12 +843,13 @@ foreach ($sessionInfo in $sessionReport)
             if (($restartCounter + $nagCounter) -lt $MaxActionsTaken)
             {
                 $nagParams = @{
-                    AdminAddress = $sessionInfo.AdminAddress
+                    AdminAddress      = $sessionInfo.AdminAddress
                     HostedMachineName = $sessionInfo.HostedMachineName
-                    SessionUID = $sessionInfo.Uid
-                    Title = $NagTitle
-                    Text = $NagText
+                    SessionUID        = $sessionInfo.Uid
+                    Title             = $NagTitle
+                    Text              = $NagText
                 }
+
                 Send-Nag @nagParams
             }
         }
@@ -844,7 +858,8 @@ foreach ($sessionInfo in $sessionReport)
 #endregion Actions
 
 
-#region Breakdown
+#region Summary
+
 $combinedReport = $sessionReport + $availableMachineReport
 
 'Final Summary' | Out-Header -Double
@@ -865,4 +880,4 @@ foreach ($property in 'UpdateStatus', 'ProposedAction', 'DiskName')
 
 $elapsed = [int]((Get-Date) - $scriptStart).TotalSeconds
 "Script completed in ${elapsed} seconds."
-#endregion Breakdown
+#endregion Summary
