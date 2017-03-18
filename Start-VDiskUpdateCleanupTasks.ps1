@@ -6,11 +6,23 @@
      Filename:     Start-VDiskUpdateCleanupTasks.ps1
 
 .SYNOPSIS
-    Assists with clearing out Citrix sessions on stale vDisks following an update.
+    Assists with getting and keeping users off of older vDisk versions, following
+    an update to a non-persistent PVS image.
 
 .DESCRIPTION
-    Stops disconnected sessions on stale vDisks, and generates prompts for users
-    on active sessions to log off.
+    Analyzes available machines to ensure they're all running the latest vDisk version,
+    and reboots them as needed.
+
+    Once all available machines are up to date, machines with sessions are analyzed.
+    
+    Whenever a session is found on a machine with an old vDisk, one of two actions will be
+    taken, depending on the session state and the duration of that state. If a session was
+    recently active, the user will be prompted to reboot.
+
+    If the session has been inactive for a specified time period, the machine will be rebooted.
+
+.LINK
+    https://github.com/andysimmons/vdi-utils/blob/master/Start-VDiskUpdateCleanupTasks.ps1
 
 .PARAMETER AdminAddress
     One or more delivery controllers.
@@ -35,10 +47,11 @@
     Content of the nag message box.
 
 .PARAMETER DeliveryGroup
-    Pattern matching the delivery group name(s).
+    Pattern matching the delivery group name(s). Wildcards are supported, but
+    regular expressions are not.
 
 .PARAMETER RegistryKey
-    Registry key (on the broker machine) containing a property that
+    Registry key (on the PVS target machine) containing a property that
     references the vDisk version in use.
 
 .PARAMETER RegistryProperty
@@ -47,8 +60,12 @@
 .PARAMETER AllVersionsPattern
     A pattern matching the naming convention for ANY version of the vDisk being updated.
 
+    Regular expressions are supported.
+
 .PARAMETER TargetVersionPattern
     A pattern describing the specific name of the target (updated) vDisk version.
+
+    Regular expressions are supported.
 
 .PARAMETER MaxRecordCount
     Maximum number of results per search, per site.
@@ -92,16 +109,16 @@ param (
     $AdminAddress,
 
     [string]
-    [ValidateSet('AvailableMachines','MachinesWithSessions','Both')]
+    [ValidateSet('AvailableMachines', 'MachinesWithSessions', 'Both')]
     $SearchScope = 'Both',
 
     [string]
     $NagTitle = 'RESTART REQUIRED',
 
     [string]
-    $NagText = "Your system must be restarted to apply the latest Epic update.`n`n" +
-               "Please save your work, then click 'Start' -> 'Log Off', and then wait`n" +
-               'for the logoff operation to complete.',
+    $NagText = "Your system must be restarted to apply the latest Epic update.`n`n" + 
+    "Please save your work, then click 'Start' -> 'Log Off', and then wait`n" + 
+    'for the logoff operation to complete.',
 
     [string]
     $DeliveryGroup = "*",
@@ -134,10 +151,10 @@ param (
     $MaxHoursIdle = 2
 )
 
-$scriptStart        = Get-Date
-$nagCounter         = 0
-$nagFailCounter     = 0
-$restartCounter     = 0
+$scriptStart = Get-Date
+$nagCounter = 0
+$nagFailCounter = 0
+$restartCounter = 0
 $restartFailCounter = 0
 
 enum UpdateStatus
@@ -164,6 +181,9 @@ enum ProposedAction
     Takes a list of computer names, checks which vDisk each one is currently running,
     and returns a hashtable with the results.
 
+.PARAMETER TimeOut
+    Timeout (sec) for querying vDisk information
+
 .PARAMETER ComputerName
     The NetBIOS name, the IP address, or the fully qualified domain name of one or more computers.
 #>
@@ -173,9 +193,13 @@ function Get-VDiskInfo
     [CmdletBinding()]
     [OutputType([hashtable])]
     param(
-        [Parameter(Mandatory,ValueFromPipeline)]
+        [Parameter(Mandatory, ValueFromPipeline)]
         [string[]]
-        $ComputerName
+        $ComputerName,
+        
+        [Parameter(Mandatory)]
+        [int]
+        $TimeOut
     )
 
     # The PVS management snap-in is pretty awful at the time of this writing, so we'll use PS remoting
@@ -305,7 +329,7 @@ function Out-Header
 
 <#
 .SYNOPSIS
-    Nag a VDI user.
+    Nag a VDI user with a popup.
 
 .DESCRIPTION
     Generates a dialog box inside a VDI session.
@@ -316,11 +340,17 @@ function Out-Header
 .PARAMETER HostedMachineName
     Hosted machine name associated with the session we're going to nag.
 
-.PARAMETER Message
-    Message to be displayed.
+.PARAMETER Title
+    Message dialog title text.
+
+.PARAMETER Text
+    Message dialog body text.
 
 .PARAMETER MessageStyle
     Message dialog icon style.
+
+.PARAMETER SessionUID
+    Session UID.
 #>
 function Send-Nag
 {
@@ -361,11 +391,11 @@ function Send-Nag
 
         $nagParams = @{
             AdminAddress = $AdminAddress
-            InputObject  = $session
-            Title        = $Title
-            Text         = $Text
+            InputObject = $session
+            Title = $Title
+            Text = $Text
             MessageStyle = $MessageStyle
-            ErrorAction  = 'Stop'
+            ErrorAction = 'Stop'
         }
 
         try
@@ -375,7 +405,7 @@ function Send-Nag
         catch
         {
             Write-Warning $_.Exception.Message
-            $nagFailCounter++
+            $script:nagFailCounter++
         }
 
         $script:nagCounter++
@@ -407,16 +437,16 @@ function Get-HealthyDDC
     foreach ($candidate in $Candidates)
     {
         # Check service states
-        try   { $brokerStatus = (Get-BrokerServiceStatus -AdminAddress $candidate -ErrorAction Stop).ServiceStatus }
+        try { $brokerStatus = (Get-BrokerServiceStatus -AdminAddress $candidate -ErrorAction Stop).ServiceStatus }
         catch { $brokerStatus = 'BROKER_OFFLINE' }
 
-        try   { $hypStatus = (Get-HypServiceStatus -AdminAddress $candidate -ErrorAction Stop).ServiceStatus }
+        try { $hypStatus = (Get-HypServiceStatus -AdminAddress $candidate -ErrorAction Stop).ServiceStatus }
         catch { $hypStatus = 'HYPERVISOR_OFFLINE' }
 
         # If it's healthy, check the site ID.
         if (($brokerStatus -eq 'OK') -and ($hypStatus -eq 'OK'))
         {
-            try   { $brokerSite = Get-BrokerSite -AdminAddress $candidate -ErrorAction Stop }
+            try { $brokerSite = Get-BrokerSite -AdminAddress $candidate -ErrorAction Stop }
             catch { $brokerSite = $null }
 
             # We only want one healthy DDC per site
@@ -462,7 +492,7 @@ $requiredSnapins = @(
 foreach ($requiredSnapin in $requiredSnapins)
 {
     Write-Verbose "Loading snap-in: $requiredSnapin"
-    try   { Add-PSSnapin -Name $requiredSnapin -ErrorAction Stop }
+    try { Add-PSSnapin -Name $requiredSnapin -ErrorAction Stop }
     catch { $missingSnapinList.Add($requiredSnapin) > $null }
 }
 
@@ -501,11 +531,11 @@ else
         Write-Progress -Activity 'Pulling available machine list' -Status $controller
 
         $availableParams = @{
-            AdminAddress     = $controller
+            AdminAddress = $controller
             DesktopGroupName = $DeliveryGroup
-            DesktopKind      = 'Shared'
-            SummaryState     = 'Available'
-            MaxRecordCount   = $MaxRecordCount
+            DesktopKind = 'Shared'
+            SummaryState = 'Available'
+            MaxRecordCount = $MaxRecordCount
         }
         $availableMachines = Get-BrokerMachine @availableParams
 
@@ -515,18 +545,18 @@ else
         {
             Write-Progress -Activity "Querying $($availableMachines.Length) desktops for vDisk information (${TimeOut} sec timeout)." -Status $controller
 
-            $vDiskLookup = Get-VDiskInfo -ComputerName $availableMachines.HostedMachineName
+            $vDiskLookup = Get-VDiskInfo -ComputerName $availableMachines.HostedMachineName -TimeOut $TimeOut
 
             # Now we can loop through the sessions and handle them accordingly
             foreach ($availableMachine in $availableMachines)
             {
-                try   { $vDisk = $vDiskLookup[$availableMachine.HostedMachineName] }
+                try { $vDisk = $vDiskLookup[$availableMachine.HostedMachineName] }
                 catch { $vDisk = $null }
 
                 $statusParams = @{
                     TargetVersionPattern = $TargetVersionPattern
-                    AllVersionsPattern   = $AllVersionsPattern
-                    DiskName             = $vDisk
+                    AllVersionsPattern = $AllVersionsPattern
+                    DiskName = $vDisk
                 }
                 $updateStatus = Get-UpdateStatus @statusParams
 
@@ -549,12 +579,12 @@ else
                 # Summarize this machine
                 [pscustomobject]@{
                     HostedMachineName = $availableMachine.HostedMachineName
-                    DiskName          = $vDisk
-                    UpdateStatus      = $updateStatus
-                    ProposedAction    = $proposedAction
-                    SummaryState      = $availableMachine.SummaryState
-                    Uid               = $availableMachine.Uid
-                    AdminAddress      = $controller.ToUpper()
+                    DiskName = $vDisk
+                    UpdateStatus = $updateStatus
+                    ProposedAction = $proposedAction
+                    SummaryState = $availableMachine.SummaryState
+                    Uid = $availableMachine.Uid
+                    AdminAddress = $controller.ToUpper()
                 }
             }
         }
@@ -585,7 +615,10 @@ else
     {
         $analysisStart = Get-Date
 
-        $oldAvailableMachines = @($availableMachineReport | Where-Object { ($_.AdminAddress -eq $controller) -and ($_.ProposedAction -eq 'Restart') })
+        $oldAvailableMachines = @(
+            $availableMachineReport | 
+                Where-Object { ($_.AdminAddress -eq $controller) -and ($_.ProposedAction -eq 'Restart') }
+        )
 
         if ($oldAvailableMachines)
         {
@@ -598,10 +631,10 @@ else
             Write-Verbose "Analyzing sessions and vDisks on $($controller.ToUpper()) (this may take a minute)..."
 
             $sessionParams = @{
-                AdminAddress     = $controller
+                AdminAddress = $controller
                 DesktopGroupName = $DeliveryGroup
-                DesktopKind      = 'Shared'
-                MaxRecordCount   = $MaxRecordCount
+                DesktopKind = 'Shared'
+                MaxRecordCount = $MaxRecordCount
             }
 
             Write-Progress -Activity 'Pulling session list' -Status $controller
@@ -613,18 +646,18 @@ else
         {
             Write-Progress -Activity "Querying $($sessions.Length) desktops for vDisk information (${TimeOut} sec timeout)." -Status $controller
 
-            $vDiskLookup = Get-VDiskInfo -ComputerName $sessions.HostedMachineName
+            $vDiskLookup = Get-VDiskInfo -ComputerName $sessions.HostedMachineName -TimeOut $TimeOut
 
             # Now we can loop through the sessions and handle them accordingly
             foreach ($session in $sessions)
             {
-                try   { $vDisk = $vDiskLookup[$session.HostedMachineName] }
+                try { $vDisk = $vDiskLookup[$session.HostedMachineName] }
                 catch { $vDisk = $null }
 
                 $statusParams = @{
                     TargetVersionPattern = $TargetVersionPattern
-                    AllVersionsPattern   = $AllVersionsPattern
-                    DiskName             = $vDisk
+                    AllVersionsPattern = $AllVersionsPattern
+                    DiskName = $vDisk
                 }
 
                 $updateStatus = Get-UpdateStatus @statusParams
@@ -658,14 +691,14 @@ else
 
                 # Summarize this session
                 [pscustomobject]@{
-                    HostedMachineName      = $session.HostedMachineName
-                    DiskName               = $vDisk
-                    UpdateStatus           = $updateStatus
-                    ProposedAction         = $proposedAction
-                    SessionState           = $session.SessionState
+                    HostedMachineName = $session.HostedMachineName
+                    DiskName = $vDisk
+                    UpdateStatus = $updateStatus
+                    ProposedAction = $proposedAction
+                    SessionState = $session.SessionState
                     SessionStateChangeTime = $session.SessionStateChangeTime
-                    Uid                    = $session.Uid
-                    AdminAddress           = $controller.ToUpper()
+                    Uid = $session.Uid
+                    AdminAddress = $controller.ToUpper()
                 }
             }
         }
@@ -687,6 +720,7 @@ else
 
 
 #region Actions
+
 # Restart available outdated machines
 foreach ($availableMachineInfo in $availableMachineReport)
 {
@@ -696,7 +730,7 @@ foreach ($availableMachineInfo in $availableMachineReport)
         {
             # Make sure the machine is still available before we reboot it.
             $refreshParams = @{
-                AdminAddress      = $availableMachineInfo.AdminAddress
+                AdminAddress = $availableMachineInfo.AdminAddress
                 HostedMachineName = $availableMachineInfo.HostedMachineName
             }
             $currentMachine = Get-BrokerMachine @refreshParams
@@ -713,9 +747,9 @@ foreach ($availableMachineInfo in $availableMachineReport)
                     {
                         $restartParams = @{
                             AdminAddress = $availableMachineInfo.AdminAddress
-                            MachineName  = $currentMachine.MachineName
-                            Action       = 'Restart'
-                            ErrorAction  = 'Stop'
+                            MachineName = $currentMachine.MachineName
+                            Action = 'Restart'
+                            ErrorAction = 'Stop'
                         }
                         try
                         {
@@ -811,13 +845,15 @@ foreach ($sessionInfo in $sessionReport)
 
 
 #region Breakdown
+$combinedReport = $sessionReport + $availableMachineReport
+
 'Final Summary' | Out-Header -Double
 
 foreach ($property in 'UpdateStatus', 'ProposedAction', 'DiskName')
 {
-    Out-Header -Header $property 
+    $property | Out-Header 
 
-    $sessionReport + $availableMachineReport | 
+    $combinedReport | 
         Group-Object -Property $property -NoElement |
         Select-Object -Property Count, @{ n = $property; e = { $_.Name } } |
         Sort-Object -Property 'Count' -Descending |
