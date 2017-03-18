@@ -189,7 +189,6 @@ enum ProposedAction
 #>
 function Get-VDiskInfo
 {
-
     [CmdletBinding()]
     [OutputType([hashtable])]
     param(
