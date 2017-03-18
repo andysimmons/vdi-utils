@@ -833,6 +833,8 @@ foreach ($sessionInfo in $sessionReport)
                         Title             = $NagTitle
                         Text              = $NagText
                     }
+                    
+                    Send-Nag @nagParams
                 }
             }
         } # 'Restart'
