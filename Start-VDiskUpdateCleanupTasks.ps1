@@ -1,6 +1,6 @@
 <#
 .NOTES
-     Created on:   3/16/2016
+     Created on:   3/21/2016
      Created by:   Andy Simmons
      Organization: St. Luke's Health System
      Filename:     Start-VDiskUpdateCleanupTasks.ps1
@@ -70,8 +70,8 @@
 .PARAMETER MaxRecordCount
     Maximum number of results per search, per site.
 
-.PARAMETER MaxActionsTaken
-    Specifies the max number of total actions (restarts + nags) that can occur during script execution
+.PARAMETER MaxRestartActions
+    Specifies the max number of reboots that can occur during script execution
     across all sites.
 
 .PARAMETER TimeOut
@@ -96,7 +96,7 @@
     and bypass confirmation prompts for any recommended actions.
 
 .EXAMPLE
-    Start-VDiskUpdateCleanupTasks.ps1 -AdminAddress ctxddc01,ctxddc02,sltctxddc01,sltctxddc02 -Verbose -DeliveryGroup "*PVS Shared Desktop" -MaxActionsTaken 10
+    Start-VDiskUpdateCleanupTasks.ps1 -AdminAddress ctxddc01,ctxddc02,sltctxddc01,sltctxddc02 -Verbose -DeliveryGroup "*PVS Shared Desktop" -MaxRestartActions 10
 
     This would invoke the script against both of our sites, targeting any Delivery Groups ending with the string "PVS Shared Desktop",
     and perform actions (with confirmation prompts) against a maximum of 10 machines/sessions total.
@@ -133,13 +133,13 @@ param (
     $AllVersionsPattern = "XD[BT]?P07GCD-\d{6}.vhd",
 
     [regex]
-    $TargetVersionPattern = "XD[BT]?P07GCD-170206.vhd",
+    $TargetVersionPattern = "XD[BT]?P07GCD-170313.vhd",
 
     [int]
     $MaxRecordCount = ([int32]::MaxValue),
 
     [int]
-    $MaxActionsTaken = 30,
+    $MaxRestartActions = 30,
 
     [int]
     $ThrottleLimit = 32,
@@ -751,7 +751,7 @@ foreach ($availableMachineInfo in $availableMachineReport)
 
             else
             {
-                if (($restartCounter + $nagCounter) -lt $MaxActionsTaken)
+                if (($restartCounter + $nagCounter) -lt $MaxRestartActions)
                 {
                     if ($PSCmdlet.ShouldProcess("$($availableMachineInfo.HostedMachineName) (Available: No Session)", 'RESTART MACHINE'))
                     {
@@ -796,7 +796,7 @@ foreach ($sessionInfo in $sessionReport)
 
             if ($currentSession.SessionState -ne 'Active')
             {
-                if (($restartCounter + $nagCounter) -lt $MaxActionsTaken)
+                if ($restartCounter -lt $MaxRestartActions)
                 {
                     if ($PSCmdlet.ShouldProcess("$($sessionInfo.HostedMachineName) (Inactive Session)", 'RESTART MACHINE'))
                     {
@@ -824,25 +824,6 @@ foreach ($sessionInfo in $sessionReport)
             # It's active now, we'll nag instead.
             else
             {
-                if (($restartCounter + $nagCounter) -lt $MaxActionsTaken)
-                {
-                    $nagParams = @{
-                        AdminAddress      = $sessionInfo.AdminAddress
-                        HostedMachineName = $sessionInfo.HostedMachineName
-                        SessionUID        = $sessionInfo.Uid
-                        Title             = $NagTitle
-                        Text              = $NagText
-                    }
-                    
-                    Send-Nag @nagParams
-                }
-            }
-        } # 'Restart'
-
-        'Nag'
-        {
-            if (($restartCounter + $nagCounter) -lt $MaxActionsTaken)
-            {
                 $nagParams = @{
                     AdminAddress      = $sessionInfo.AdminAddress
                     HostedMachineName = $sessionInfo.HostedMachineName
@@ -850,9 +831,22 @@ foreach ($sessionInfo in $sessionReport)
                     Title             = $NagTitle
                     Text              = $NagText
                 }
-
+                
                 Send-Nag @nagParams
             }
+        } # 'Restart'
+
+        'Nag'
+        {
+            $nagParams = @{
+                AdminAddress      = $sessionInfo.AdminAddress
+                HostedMachineName = $sessionInfo.HostedMachineName
+                SessionUID        = $sessionInfo.Uid
+                Title             = $NagTitle
+                Text              = $NagText
+            }
+
+            Send-Nag @nagParams
         }
     }
 }
