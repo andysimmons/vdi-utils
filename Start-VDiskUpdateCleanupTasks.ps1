@@ -1,6 +1,6 @@
 <#
 .NOTES
-     Created on:   3/21/2016
+     Created on:   3/16/2016
      Created by:   Andy Simmons
      Organization: St. Luke's Health System
      Filename:     Start-VDiskUpdateCleanupTasks.ps1
@@ -184,6 +184,13 @@ enum ProposedAction
 .PARAMETER TimeOut
     Timeout (sec) for querying vDisk information
 
+.PARAMETER RegistryKey
+    Registry key (on the PVS target machine) containing a property that
+    references the vDisk version in use.
+
+.PARAMETER RegistryProperty
+    Registry key property to inspect.
+
 .PARAMETER ComputerName
     The NetBIOS name, the IP address, or the fully qualified domain name of one or more computers.
 #>
@@ -198,7 +205,15 @@ function Get-VDiskInfo
         
         [Parameter(Mandatory)]
         [int]
-        $TimeOut
+        $TimeOut,
+
+        [Parameter(Mandatory)]
+        [string]
+        $RegistryKey,
+
+        [Parameter(Mandatory)]
+        [string]
+        $RegistryProperty
     )
 
     # The PVS management snap-in is pretty awful at the time of this writing, so we'll use PS remoting
@@ -288,7 +303,7 @@ function Get-UpdateStatus
 
 <#
 .SYNOPSIS
-    Generates a simple text header.
+    Underlines a string.
 
 .PARAMETER Header
     Header text.
@@ -433,19 +448,25 @@ function Get-HealthyDDC
     )
 
     $siteLookup = @{ }
+
     foreach ($candidate in $Candidates)
     {
+        $candidateParams = @{
+            AdminAddress = $candidate
+            ErrorAction  = 'Stop'
+        }
+
         # Check service states
-        try   { $brokerStatus = (Get-BrokerServiceStatus -AdminAddress $candidate -ErrorAction Stop).ServiceStatus }
+        try   { $brokerStatus = (Get-BrokerServiceStatus @candidateParams).ServiceStatus }
         catch { $brokerStatus = 'BROKER_OFFLINE' }
 
-        try   { $hypStatus = (Get-HypServiceStatus -AdminAddress $candidate -ErrorAction Stop).ServiceStatus }
+        try   { $hypStatus = (Get-HypServiceStatus @candidateParams).ServiceStatus }
         catch { $hypStatus = 'HYPERVISOR_OFFLINE' }
 
         # If it's healthy, check the site ID.
         if (($brokerStatus -eq 'OK') -and ($hypStatus -eq 'OK'))
         {
-            try   { $brokerSite = Get-BrokerSite -AdminAddress $candidate -ErrorAction Stop }
+            try   { $brokerSite = Get-BrokerSite @candidateParams }
             catch { $brokerSite = $null }
 
             # We only want one healthy DDC per site
@@ -473,13 +494,28 @@ function Get-HealthyDDC
     }
 
     # Return only the names of the healthy DDCs from our site lookup hashtable
-    Write-Output $siteLookup.Values
+    $siteLookup.Values
 }
 #endregion Functions
 
 
 #region Initialization
-Write-Verbose "$(Get-Date): Starting '$($MyInvocation.Line)'"
+Write-Verbose "$(Get-Date): Started as '$($MyInvocation.Line)'"
+
+# Obnoxious workaround. We'll summarize all interesting parameters (anything assigned - 
+# both default and custom) inside a hashtable, and shoot that to verbose output.
+$invocationParams = $PSBoundParameters
+$supportedParams = (Get-Command -Name $MyInvocation.MyCommand.Source).Parameters
+
+foreach ($key in $supportedParams.keys)
+{
+    $var = Get-Variable -Name $key -ErrorAction SilentlyContinue;
+    if ($var)
+    {
+        $invocationParams[$var.name] = $var.value
+    }
+}
+Write-Verbose "Parameter assignments...`n$($invocationParams | Format-Table -HideTableHeaders | Out-String)"
 
 Write-Verbose 'Loading required Citrix snap-ins...'
 [Collections.ArrayList]$missingSnapinList = @()
@@ -545,8 +581,15 @@ else
         if ($availableMachines)
         {
             Write-Progress -Activity "Querying $($availableMachines.Length) desktops for vDisk information (${TimeOut} sec timeout)." -Status $controller
+            
+            $lookupParams = @{
+                ComputerName     = $availableMachines.HostedMachineName
+                Timeout          = $Timeout
+                RegistryKey      = $RegistryKey
+                RegistryProperty = $RegistryProperty
 
-            $vDiskLookup = Get-VDiskInfo -ComputerName $availableMachines.HostedMachineName -TimeOut $TimeOut
+            }
+            $vDiskLookup = Get-VDiskInfo @lookupParams
 
             # Now we can loop through the sessions and handle them accordingly
             foreach ($availableMachine in $availableMachines)
@@ -652,7 +695,14 @@ else
         {
             Write-Progress -Activity "Querying $($sessions.Length) desktops for vDisk information (${TimeOut} sec timeout)." -Status $controller
 
-            $vDiskLookup = Get-VDiskInfo -ComputerName $sessions.HostedMachineName -TimeOut $TimeOut
+            $lookupParams = @{
+                ComputerName     = $sessions.HostedMachineName
+                Timeout          = $Timeout
+                RegistryKey      = $RegistryKey
+                RegistryProperty = $RegistryProperty
+
+            }
+            $vDiskLookup = Get-VDiskInfo @lookupParams
 
             Write-Progress -Activity "Querying $($sessions.Length) desktops for vDisk information (${TimeOut} sec timeout)." -Completed
             
