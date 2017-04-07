@@ -1,6 +1,6 @@
 <#
 .NOTES
-     Created on:   3/16/2016
+     Created on:   4/7/2016
      Created by:   Andy Simmons
      Organization: St. Luke's Health System
      Filename:     Start-VDiskUpdateCleanupTasks.ps1
@@ -83,6 +83,12 @@
 .PARAMETER MaxHoursIdle
     Maximum number of hours a session can be inactive before we forcefully shut it down.
 
+.PARAMETER RunAsync
+    Don't monitor reboot progress, just exit the script as soon as all tasks are queued on the DDCs.
+
+.PARAMETER PowerActionTimeout
+    Timeout (sec) for MONITORING the status of queued power actions.
+
 .EXAMPLE
     Start-VDiskUpdateCleanupTasks.ps1 -AdminAddress ctxddc01,ctxddc02,sltctxddc01,sltctxddc02 -Verbose -WhatIf
 
@@ -109,7 +115,7 @@ param (
     $AdminAddress,
 
     [string]
-    [ValidateSet('AvailableMachines', 'MachinesWithSessions', 'Both')]
+    [ValidateSet('AvailableMachines','MachinesWithSessions','Both')]
     $SearchScope = 'Both',
 
     [string]
@@ -148,14 +154,22 @@ param (
     $TimeOut = 120,
 
     [int]
-    $MaxHoursIdle = 2
+    $MaxHoursIdle = 2,
+
+    [switch]
+    $RunAsync,
+
+    [int]
+    $PowerActionTimeout = 1800
 )
 
 $scriptStart = Get-Date
-$nagCounter = 0
-$nagFailCounter = 0
-$restartCounter = 0
-$restartFailCounter = 0
+$nagCount = 0
+$nagFailCount = 0
+$restartCount = 0
+$restartFailCount = 0
+$completedTaskCount = 0
+$whatIfRestartCount = 0
 
 enum UpdateStatus
 {
@@ -232,12 +246,14 @@ function Get-VDiskInfo
     Get-Job -Name 'vDiskJob' | Remove-Job -Force -WhatIf:$false
 
     # Create a hashtable mapping the computer name to the vDisk name
-    Write-Progress -Activity "Comparing $($sessions.Length) desktops against $($vDisks.Length) vDisk results." -Status $controller
+    $activity = "Comparing $($sessions.Length) desktops against $($vDisks.Length) vDisk results."
+    Write-Progress -Activity $activity -Status $controller
     $vDiskLookup = @{ }
     foreach ($vDisk in $vDisks)
     {
         $vDiskLookup[$vDisk.PSComputerName] = $vDisk.DiskName
     }
+    Write-Progress -Activity $activity -Completed
 
     # Return the lookup table
     $vDiskLookup
@@ -419,10 +435,10 @@ function Send-Nag
         catch
         {
             Write-Warning $_.Exception.Message
-            $script:nagFailCounter++
+            $script:nagFailCount++
         }
 
-        $script:nagCounter++
+        $script:nagCount++
     }
 }
 
@@ -495,6 +511,71 @@ function Get-HealthyDDC
 
     # Return only the names of the healthy DDCs from our site lookup hashtable
     $siteLookup.Values
+}
+
+<#
+.SYNOPSIS
+    Checks the current status of previously queued HostingPowerActions, and
+    returns the task if it's still pending.
+
+.PARAMETER Task
+    String following the format "<task UID>@<admin address>".
+
+.EXAMPLE
+    Get-PendingPowerAction -Task '123456@ctxddc01'
+#>
+function Get-PendingPowerAction
+{
+    [OutputType([string])]
+    [CmdletBinding()]
+    param (
+        [Parameter(ValueFromPipeline, Mandatory)]
+        [string]
+        $Task
+    )
+
+    process
+    {
+        if ($Task -notmatch '[0-9]+@.+')
+        {
+            Write-Error "Discarding task '${Task}' because it looks funny." -Category ParserError
+        }
+        else 
+        {
+            $taskTokens   = $Task.ToUpper() -split '@'
+            $taskUid      = $taskTokens[0]
+            $adminAddress = $taskTokens[1]
+
+            try
+            {
+                $taskInfo = Get-BrokerHostingPowerAction -AdminAddress $adminAddress -Uid $taskUid -ErrorAction 'Stop'
+            }
+            catch
+            {
+                Write-Warning $_.Exception.Message
+                $taskInfo = $null
+            }
+            
+            # Task is in its final state. Don't return it, just summarize.
+            if ($taskInfo.ActionCompletionTime)
+            {
+                $action     = $taskInfo.Action
+                $machine    = $taskInfo.HostedMachineName.ToString().ToUpper()
+                $result     = $taskInfo.State.ToString().ToLower()
+                $resultTime = $taskInfo.ActionCompletionTime
+
+                if ($result -ne 'completed')
+                {
+                    $script:restartFailCount++
+                }
+
+                Write-Verbose "${machine} ${action} result: ${result} ($($adminAddress.ToUpper()): ${resultTime})"
+            }
+
+            # Still pending. Return it.
+            else { $Task }
+        } 
+    }
 }
 #endregion Functions
 
@@ -778,6 +859,7 @@ else
 
 
 #region Actions
+[Collections.ArrayList]$asyncTasks = @()
 
 # Restart available outdated machines
 foreach ($availableMachineInfo in $availableMachineReport)
@@ -801,7 +883,7 @@ foreach ($availableMachineInfo in $availableMachineReport)
 
             else
             {
-                if (($restartCounter + $nagCounter) -lt $MaxRestartActions)
+                if (($restartCount -lt $MaxRestartActions) -and ($whatIfRestartCount -lt $MaxRestartActions))
                 {
                     if ($PSCmdlet.ShouldProcess("$($availableMachineInfo.HostedMachineName) (Available: No Session)", 'RESTART MACHINE'))
                     {
@@ -814,18 +896,26 @@ foreach ($availableMachineInfo in $availableMachineReport)
 
                         try
                         {
-                            New-BrokerHostingPowerAction @restartParams > $null
-                            $restartCounter++
+                            $asyncTask = New-BrokerHostingPowerAction @restartParams
+                            $taskName  = "$($asyncTask.Uid)@$($restartParams.AdminAddress)"
+                            
+                            $asyncTasks.Add($taskName) > $null
+                            Write-Verbose "Task: ${taskName}"
+                            $restartCount++
                         }
                         catch
                         {
                             Write-Warning $_.Exception.Message
-                            $restartFailCounter++
+                            $restartFailCount++
                         }
                     }
-                }
+                    else
+                    {
+                        $whatIfRestartCount++
+                    }
+                } 
             }
-        }
+        } 
     }
 }
 
@@ -846,7 +936,7 @@ foreach ($sessionInfo in $sessionReport)
 
             if ($currentSession.SessionState -ne 'Active')
             {
-                if ($restartCounter -lt $MaxRestartActions)
+                if (($restartCount -lt $MaxRestartActions) -and ($whatIfRestartCount -lt $MaxRestartActions))
                 {
                     if ($PSCmdlet.ShouldProcess("$($sessionInfo.HostedMachineName) (Inactive Session)", 'RESTART MACHINE'))
                     {
@@ -859,14 +949,22 @@ foreach ($sessionInfo in $sessionReport)
 
                         try
                         {
-                            New-BrokerHostingPowerAction @restartParams > $null
-                            $restartCounter++
+                            $asyncTask = New-BrokerHostingPowerAction @restartParams
+                            $taskName  = "$($asyncTask.Uid)@$($restartParams.AdminAddress)"
+                            
+                            $asyncTasks.Add($taskName) > $null
+                            Write-Verbose "Task: ${taskName}"
+                            $restartCount++
                         }
                         catch
                         {
                             Write-Warning $_.Exception.Message
-                            $restartFailCounter++
+                            $restartFailCount++
                         }
+                    }
+                    else
+                    {
+                        $whatIfRestartCount++
                     }
                 }
             } 
@@ -903,8 +1001,66 @@ foreach ($sessionInfo in $sessionReport)
 #endregion Actions
 
 
-#region Summary
+#region Monitor
 
+# Unless otherwise specified, wait for power actions to complete before exiting script.
+if (-not $RunAsync)
+{
+    $startingTaskCount = $asyncTasks.Count
+    $stopWatch = [Diagnostics.StopWatch]::StartNew()
+    
+    $activity   = 'Waiting for power actions to complete'
+    $activityId = 10
+    $progressParams = @{
+        Activity = $activity
+        Status   = "Querying ${startingTaskCount} tasks"
+        Id       = $activityId
+    }
+    Write-Progress @progressParams
+
+    while ($asyncTasks -and ($stopWatch.Elapsed.TotalSeconds -lt $PowerActionTimeout))
+    {
+        $asyncTasks = @($asyncTasks | Get-PendingPowerAction)
+
+        if ($asyncTasks)
+        {
+            $completedTaskCount = $startingTaskCount - $asyncTasks.Count
+            $pctComplete = 100 * ($completedTaskCount / $startingTaskCount)
+            
+            # Update the "elapsed" time on the progress bar each second, but 
+            # don't re-query anything for another 5 seconds.
+            for ($i = 1; $i -le 5; $i++)
+            {
+                $elapsed = $stopWatch.Elapsed.ToString("mm\:ss")
+                
+                $progressParams = @{
+                    PercentComplete = $pctComplete
+                    Id              = $activityId
+                    Activity        = $activity
+                    Status          = "${completedTaskCount}/${startingTaskCount} (${elapsed} elapsed)"
+                }
+                Write-Progress @progressParams
+
+                Start-Sleep -Seconds 1
+            }
+        }
+    }
+
+    if ($asyncTasks)
+    {
+        Write-Warning "$($asyncTasks.Count) tasks still pending after ${PowerActionTimeout} seconds!"
+        Write-Warning "The following power actions are still queued, but their"
+        Write-Warning "progress will not be monitored:"
+        $asyncTasks | Write-Warning
+    }
+
+    Write-Progress -Activity $activity -Id $activityId -Completed
+    $stopWatch.Stop()
+}
+#endregion Monitor
+
+
+#region Summary
 $combinedReport = $sessionReport + $availableMachineReport
 
 'Final Summary' | Out-Header -Double
@@ -920,9 +1076,8 @@ foreach ($property in 'UpdateStatus', 'ProposedAction', 'DiskName')
         Format-Table -HideTableHeaders
 }
 
-"Total Nags Sent: ${nagCounter} (${nagFailCounter} failed)"
-"Total Restarts Requested: ${restartCounter} (${restartFailCounter} failed)"
-
-$elapsed = [int]((Get-Date) - $scriptStart).TotalSeconds
-"Script completed in ${elapsed} seconds."
+$elapsedSeconds = [int]((Get-Date) - $scriptStart).TotalSeconds
+"Total Nags Sent: ${nagCount} (${nagFailCount} failed)"
+"Total Restarts Requested: ${restartCount} (${restartFailCount} failed, $($asyncTasks.Count) pending)."
+"Script completed in ${elapsedSeconds} seconds."
 #endregion Summary
