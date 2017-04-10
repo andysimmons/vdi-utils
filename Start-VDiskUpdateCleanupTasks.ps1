@@ -1,6 +1,6 @@
 <#
 .NOTES
-     Created on:   4/7/2016
+     Created on:   3/16/2016
      Created by:   Andy Simmons
      Organization: St. Luke's Health System
      Filename:     Start-VDiskUpdateCleanupTasks.ps1
@@ -163,6 +163,8 @@ param (
     $PowerActionTimeout = 1800
 )
 
+[Collections.ArrayList]$asyncTasks = @()
+[Collections.ArrayList]$whatIfTracker = @()
 $scriptStart = Get-Date
 $nagCount = 0
 $nagFailCount = 0
@@ -859,7 +861,13 @@ else
 
 
 #region Actions
-[Collections.ArrayList]$asyncTasks = @()
+
+
+# Randomize the report order so we get some distribution across sites.
+# TODO: Write a helper function to sort (round-robin across sites by action).
+$sessionReport          = $sessionReport          | Sort-Object {Get-Random}
+$availableMachineReport = $availableMachineReport | Sort-Object {Get-Random}
+
 
 # Restart available outdated machines
 foreach ($availableMachineInfo in $availableMachineReport)
@@ -912,6 +920,7 @@ foreach ($availableMachineInfo in $availableMachineReport)
                     else
                     {
                         $whatIfRestartCount++
+                        $whatIfTracker.Add($availableMachineInfo) > $null
                     }
                 } 
             }
@@ -965,6 +974,7 @@ foreach ($sessionInfo in $sessionReport)
                     else
                     {
                         $whatIfRestartCount++
+                        $whatIfTracker.Add($sessionInfo) > $null
                     }
                 }
             } 
