@@ -19,8 +19,7 @@
 .EXAMPLE
     'siteA-ddc1','siteB-ddc1' | Get-SessionsByReceiverType.ps1 -ReceiverType ReceiverForWeb
 
-    Retrieves all sessions across two sites and returns all sessions with users running
-    Receiver for Web.
+    Retrieves all sessions across two sites with users running Receiver for Web.
 #>
 [CmdletBinding()]
 param (
