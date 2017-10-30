@@ -98,7 +98,7 @@ foreach ($policyMapping in $policyMappings)
 
     # Citrix automatically creates entitlement policies when delivery groups are created 
     # using this format: 
-    $autoName   = "${groupName}_1"
+    $autoName = "${groupName}_1"
 
     if ($autoName -match $policyName)
     {
