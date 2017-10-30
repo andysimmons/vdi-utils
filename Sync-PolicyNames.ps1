@@ -1,6 +1,6 @@
 <#
 .NOTES
-    Name:    Sync-PolicyMappings.ps1
+    Name:    Sync-PolicyNames.ps1
     Author:  Andy Simmons
     Date:    10/30/2017
     Version: 1.0.0
@@ -22,13 +22,13 @@
     Optionally specify an individual delivery group.
 
 .EXAMPLE
-    .\Sync-PolicyMappings.ps1 -AdminAddress 'ctxddc01' -WhatIf
+    .\Sync-PolicyNames.ps1 -AdminAddress 'ctxddc01' -WhatIf
 
     Simulates synchronizing policy names with delivery group names for all
     delivery groups on CTXDDC01.
 
 .EXAMPLE
-    .\Sync-PolicyMappings.ps1 -AdminAddress 'ctxddc01' -DeliveryGroup "My Group" -Verbose
+    .\Sync-PolicyNames.ps1 -AdminAddress 'ctxddc01' -DeliveryGroup "My Group" -Verbose
 
     Synchronizes the entitlement policy name for just the "My Group" delivery group.
 #>
