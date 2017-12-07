@@ -196,3 +196,4 @@ elseif ($PSCmdlet.ShouldProcess($vDiskDrive, "allocate unwritable free space"))
 		'Error'       { Write-Error $message }
 	}
 }
+ 
