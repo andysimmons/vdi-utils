@@ -39,7 +39,7 @@ function New-LogEntry
 
 	if ($PSCmdlet.ShouldProcess("$LogName log", "new '$Source' $EntryType event"))
 	{
-	    # Register the log source
+		# Register the log source
 		try
 		{
 			$nelParams = @{
@@ -127,8 +127,8 @@ if (!($vDiskFree -and $wcFree))
 if ($vDiskFree -le $wcFree)
 {
 	$message = 'Write cache looks good! Nothing to fix.'
-    New-LogEntry -Message $message -ErrorAction 'Continue'
-    Write-Verbose $message
+	New-LogEntry -Message $message -ErrorAction 'Continue'
+	Write-Verbose $message
 	exit
 }
 
