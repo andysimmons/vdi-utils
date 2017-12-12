@@ -38,13 +38,12 @@ catch
 
 try
 {
-    $location = Get-Folder -Name $VMFolder -ErrorAction 'Stop'
+    $location = Get-Folder -Name $VMFolder -ErrorAction 'Stop' -Server $VIServer
 
     # There's no great way to just query exactly what we need from vCenter, so we'll build
     # a collection as specifically as possible first, and then pare it down from there.
     Write-Verbose "Retrieving VMs from $($location.Count) folder(s)..."
-    $vms = $location | Get-VM -ErrorAction 'Stop' -Server $VIServer |
-        Where-Object { [int] $_.ProvisionedSpaceGB -in $ExpectedSizeGB }
+    $vms = $location | Get-VM -ErrorAction 'Stop' | Where-Object { [int] $_.ProvisionedSpaceGB -in $ExpectedSizeGB }
 }
 catch
 {
