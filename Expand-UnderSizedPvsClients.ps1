@@ -80,7 +80,12 @@ foreach ($vm in $vms)
         continue 
     }
 
-    if ($wcDisk.CapacityGB -notin $ExpectedSizeGB) { "weird"; continue }
+    if ($wcDisk.CapacityGB -notin $ExpectedSizeGB) { continue }
+    if ($wcDisk.StorageFormat -ne 'Thin') 
+    {
+        Write-Warning "'$wcDisk' on '$vm' isn't thin provisioned. Skipping."
+        continue
+    }
 
     $target = [pscustomobject] [ordered] @{
         VirtualMachine = $vm
