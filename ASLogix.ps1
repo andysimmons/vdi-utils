@@ -1,8 +1,9 @@
 <#
 .SYNOPSIS
-    Work in progress...
+Work in progress...
 .DESCRIPTION
-    Creates a container for caching Exchange Online mailbox data on non-persistent machines.
+Creates an Outlook data folder container (ODFC) for caching Exchange Online mailbox
+data on non-persistent machines (targeted toward VDI/RDSH environments).
 .NOTES
 Recreating behavior described here: https://docs.fslogix.com/display/20170529/Concurrent+Office+365+Container+Access
 
@@ -78,35 +79,42 @@ param
     [Parameter(ParameterSetName = 'Network')]
     [Parameter(ParameterSetName = 'Local')]
     [Parameter(ParameterSetName = 'PerSession')]
-    [ValidateScript({ $_ -gt 500mb })]
+    [IO.DirectoryInfo] $VDiskFolder = 'C:\VHDTest\${env:USERNAME}',
+
+    [Parameter(ParameterSetName = 'Normal')]
+    [Parameter(ParameterSetName = 'Network')]
+    [Parameter(ParameterSetName = 'Local')]
+    [Parameter(ParameterSetName = 'PerSession')]
+    [IO.FileInfo] $VDisk = 'ODFC.vhdx',
+
+    [Parameter(ParameterSetName = 'Normal')]
+    [Parameter(ParameterSetName = 'Network')]
+    [Parameter(ParameterSetName = 'Local')]
+    [Parameter(ParameterSetName = 'PerSession')]
+    [ValidateScript( { $_ -gt 500mb })]
     [int64] $DiskSize = 10gb,
 
-    [Parameter(ParameterSetName = 'Normal')]
-    [Parameter(ParameterSetName = 'Network')]
     [Parameter(ParameterSetName = 'Local')]
-    [Parameter(ParameterSetName = 'PerSession')]
-    [ValidateScript({ Test-Path -Path $_ })]
-    [string] $VDisk = 'D:\VHDTest\Base.vhdx',
-
-    [Parameter(ParameterSetName = 'Normal')]
     [Parameter(ParameterSetName = 'Network')]
-    [Parameter(ParameterSetName = 'Local')]
-    [Parameter(ParameterSetName = 'PerSession')]
-    [string] $DifferenceDisk = "D:\VHDTest\Diff-${env:COMPUTERNAME}.vhdx",
+    [IO.FileInfo] $DifferenceDisk = "_ODFC.vhdx",
 
-    [string] $MergeDisk = 'D:\VHDTest\Merge.vhdx'
+    [Paramter(ParameterSetName = 'Network')]
+    [string] $MergeDisk = 'Merge.vhdx'
 )
 
+switch ($PSCmdlet.ParameterSetName) {
+    'Normal' {}
+    'Network' { $DifferenceDisk = $env:UserName + $DifferenceDisk }
+    'Local' { $DifferenceDisk = 'sid_placeholder' + $DifferenceDisk }
+    'PerSession' {}
+}
 
-try 
-{ 
+try { 
     Get-VHD -Path $VDisk -ErrorAction Stop 
     Write-Verbose "Found usable virtual disk: $VDisk"
 }
-catch 
-{
-    if (Test-Path -Path $VDisk) 
-    { 
+catch {
+    if (Test-Path -Path $VDisk) { 
         Write-Warning "Removing unusable virtual disk: $VDisk"
         Remove-Item -Path $VDisk -Force 
     }
