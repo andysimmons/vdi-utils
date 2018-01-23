@@ -3,7 +3,7 @@
 	Name:    Stop-GhostSessions.ps1
 	Author:  Andy Simmons
 	Date:    10/24/2016
-	Version: 1.0.9
+	Version: 1.0.10
 	Requirements:
 		- Citrix Broker and Host Admin snap-ins (installed w/ Citrix Studio)
 		- User needs the following permissions on each site/farm:
@@ -47,10 +47,10 @@
 	
 	Search for ghost sessions across multiple sites, and kill a maximum of 10 sessions total.
 #>
-[CmdletBinding(ConfirmImpact = 'Medium', SupportsShouldProcess = $true)]
+[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
 param
 (
-	[Parameter(Mandatory = $true)]
+	[Parameter(Mandatory)]
 	[Alias('DDCs','AdminAddress')]
 	[string[]]
 	$DDC,
@@ -127,7 +127,7 @@ function Get-HealthyDDC
 		{
 			Write-Warning "DDC '$candidate' broker service status: $brokerStatus, hypervisor service status: $hypStatus. Skipping."
 		}
-	} # foreach
+	}
 	
 	# Return only the names of the healthy DDCs from our site lookup hashtable
 	Write-Output $siteLookup.Values
@@ -191,7 +191,7 @@ function Get-GhostMachine
 			Write-Warning "Error querying ${AdminAddress} for ghost sessions. Exception message:"
 			Write-Warning $_.Exception.Message
 		}
-	} # process
+	}
 }
 
 #endregion Functions
@@ -237,13 +237,13 @@ if (!$controllers.Length)
 Write-Progress -Activity 'Finding ghost sessions' -Status $($controllers -join ', ')
 
 $ghostMachines = @($controllers | Get-GhostMachine -ConnectionTimeoutMinutes $ConnectionTimeoutMinutes)
-$totalGhosts = $ghostMachines.Length
+$totalGhosts = $ghostMachines.Count
 
-
+if ($totalGhosts) { Write-Warning "Found ${totalGhosts} ghost sessions!" }
 
 if ($MaxSessions -lt $totalGhosts)
 {
-	Write-Verbose "Found ${totalGhosts} total ghost sessions. Only killing the first ${MaxSessions}."
+	Write-Verbose "Only killing the first ${MaxSessions} of ${totalGhosts} ghost sessions."
 	$ghostMachines = @($ghostMachines | Select-Object -First $MaxSessions)
 }
 
@@ -255,16 +255,21 @@ if ($ghostMachines)
 	$attemptCounter = 0
 	$stopCounter    = 0
 	$failCounter    = 0
+
+	$keyProps = @(
+		'AdminAddress',
+		'HostedMachineName',
+		'AgentVersion',
+		'LoginInProgress',
+		'SessionClientName',
+		'SessionLaunchedViaIP',
+		'LastConnectionUser',
+		'SessionStateChangeTime',
+		'LastConnectionTime',
+		'LastHostingUpdateTime'	
+	)
 	
-	$ghostDetails = $ghostMachines | Select-Object -Property AdminAddress,
-	                                                         HostedMachineName,
-	                                                         AgentVersion,
-	                                                         SessionClientName,
-	                                                         SessionLaunchedViaIP,
-	                                                         LastConnectionUser,
-	                                                         SessionStateChangeTime,
-	                                                         LastConnectionTime,
-	                                                         LastHostingUpdateTime | Format-Table -AutoSize | Out-String
+	$ghostDetails = $ghostMachines | Select-Object -Property $keyProps | Format-Table -AutoSize | Out-String
 	Write-Verbose $ghostDetails
 	
 	# Loop through the ghosts, and force reset each one.
@@ -281,10 +286,10 @@ if ($ghostMachines)
 			try
 			{
 				$forceResetParams = @{
-					Action        = 'Reset'
-					AdminAddress  = $ghostMachine.AdminAddress
-					MachineName   = $ghostMachine.MachineName
-					ErrorAction   = 'Stop'
+					Action       = 'Reset'
+					AdminAddress = $ghostMachine.AdminAddress
+					MachineName  = $ghostMachine.MachineName
+					ErrorAction  = 'Stop'
 				}
 				
 				New-BrokerHostingPowerAction @forceResetParams > $null
@@ -293,8 +298,8 @@ if ($ghostMachines)
 			
 			catch
 			{
-				Write-Warning "Error restarting session '$friendlyName'. Exception message:"
-				Write-Warning $_.Exception.Message
+				Write-Error "Error restarting session '$friendlyName'. Exception message:"
+				Write-Error $_.Exception.Message
 				$failCounter++
 			}
 			
@@ -302,19 +307,19 @@ if ($ghostMachines)
 			{
 				$attemptCounter++
 			}
-		} # if
-	} # foreach
+		}
+	}
 	
-	$summary = "Ghost Sessions Found:   ${totalGhosts}`n"    +
-	           "Force Resets Attempted: ${attemptCounter}`n" +
-	           "Reset Tasks Queued:     ${stopCounter}`n"    +
-	           "Reset Tasks Failed:     ${failCounter}"
+	$summary = "Ghost Sessions Found:   ${totalGhosts}`n" +
+		"Force Resets Attempted: ${attemptCounter}`n" +
+		"Reset Tasks Queued:     ${stopCounter}`n"    +
+		"Reset Tasks Failed:     ${failCounter}"
 	
 	if ($attemptCounter)
 	{
 		$summary += "`n`nNote: Power actions are throttled. It may take a few minutes " + 
-		            "for these tasks to make it to the hosting platform.`n`n"           +
-		            'See the corresponding hosting connection(s) config in Citrix Studio for specific details.'
+		"for these tasks to make it to the hosting platform.`n`n" +
+		'See the corresponding hosting connection(s) config in Citrix Studio for specific details.'
 	}
 }
 
