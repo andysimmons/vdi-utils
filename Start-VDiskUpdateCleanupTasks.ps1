@@ -106,6 +106,15 @@
 
     This would invoke the script against both of our sites, targeting any Delivery Groups ending with the string "PVS Shared Desktop",
     and perform actions (with confirmation prompts) against a maximum of 10 machines/sessions total.
+    
+.EXAMPLE
+    Start-VDiskUpdateCleanupTasks.ps1 -AdminAddress ctxddc01,ctxddc02,sltctxddc01,sltctxddc02 -Verbose -DeliveryGroup "*P07SLHS*" -SearchScope ‘AvailableMachines’ -Confirm:$false
+
+    Ian's Example 1
+.EXAMPLE
+    Start-VDiskUpdateCleanupTasks.ps1 -AdminAddress ctxddc01,ctxddc02,sltctxddc01,sltctxddc02 -Verbose -DeliveryGroup "*P07CDR*" -SearchScope ‘AvailableMachines’ -Confirm:$false 
+
+    Ian's Example 2
 #>
 #Requires -Version 5
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
