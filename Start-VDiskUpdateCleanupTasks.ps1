@@ -160,7 +160,7 @@ param (
     $RunAsync,
 
     [int]
-    $PowerActionTimeout = 1800
+    $PowerActionTimeout = 3600
 )
 
 [Collections.ArrayList]$asyncTasks = @()
