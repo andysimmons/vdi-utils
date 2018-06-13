@@ -136,10 +136,10 @@ param (
     $RegistryProperty = 'DiskName',
 
     [regex]
-    $AllVersionsPattern = "XD[BT]?P07GCD-\d{6}.vhd",
+    $AllVersionsPattern = "XD[BT]?P07(GCD|SLHS)-\d{6}.vhd",
 
     [regex]
-    $TargetVersionPattern = "XD[BT]?P07GCD-170313.vhd",
+    $TargetVersionPattern = "XD[BT]?P07SLHS-yyMMdd.vhd",
 
     [int]
     $MaxRecordCount = ([int32]::MaxValue),
