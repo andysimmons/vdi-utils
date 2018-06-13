@@ -145,7 +145,7 @@ param (
     $MaxRecordCount = ([int32]::MaxValue),
 
     [int]
-    $MaxRestartActions = 30,
+    $MaxRestartActions = 1000,
 
     [int]
     $ThrottleLimit = 32,
