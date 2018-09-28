@@ -54,8 +54,8 @@ $badPrinter = Get-BadPrinter
 
 if ($badPrinter) {
 
-    Write-Output "Found the following stale printers:"
-    $badPrinters
+    Write-Warning "Found the following stale printers:"
+    $badPrinter | Out-String -Stream | Write-Warning
 
     if ($PSCmdlet.ShouldProcess("$($badPrinter.Count) stale printer(s)", "Remove")) {
         Remove-Printer -Name $badPrinter.Name -Verbose
@@ -70,7 +70,7 @@ if ($badPrinter) {
 
             if (Get-BadPrinter) {
                 Write-Warning "REMOVAL_FAILED Couldn't remove the following stale printers:"
-                Get-BadPrinter | Out-String | Write-Warning
+                Get-BadPrinter | Out-String -Stream | Write-Warning
             }
         }        
     }
