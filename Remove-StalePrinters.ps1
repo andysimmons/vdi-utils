@@ -66,7 +66,7 @@ if ($badPrinter) {
                 Write-Output "[$(Get-Date -f g)] Couldn't clear out all of the printers. Retry $retryCounter/$retryLimit in $RetryDelaySec seconds..."
                 Start-Sleep -Seconds $RetryDelaySec
                 Remove-Printer -Name (Get-BadPrinter).Name -Verbose
-            } while ((Get-BadPrinter) -and ($retryCounter -le $retryLimit))
+            } while ((Get-BadPrinter) -and ($retryCounter -lt $retryLimit))
 
             if (Get-BadPrinter) {
                 Write-Warning "REMOVAL_FAILED Couldn't remove the following stale printers:"
