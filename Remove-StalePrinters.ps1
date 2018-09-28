@@ -63,7 +63,7 @@ if ($badPrinter) {
         if (Get-BadPrinter) {
             do {
                 $retryCounter++
-                Write-Output "[$(Get-Date -f g)] Couldn't clear out all of the printers. Retry $retryCounter/$retryLimit in $RetryDelaySec seconds..."
+                Write-Output "Couldn't clear out all of the printers. Retry $retryCounter/$retryLimit in $RetryDelaySec seconds..."
                 Start-Sleep -Seconds $RetryDelaySec
                 Remove-Printer -Name (Get-BadPrinter).Name -Verbose
             } while ((Get-BadPrinter) -and ($retryCounter -lt $retryLimit))
