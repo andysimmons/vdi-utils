@@ -36,7 +36,8 @@ param (
     $LogFile = "${env:USERPROFILE}\badPrinters.txt"
 )
 
-Start-Transcript -Path $LogFile
+# overriding $WhatIfPreference so we can test transcription
+Start-Transcript -Path $LogFile -WhatIf:$false
 Start-Sleep -Seconds 1
 
 function Get-BadPrinter {
