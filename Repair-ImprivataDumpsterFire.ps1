@@ -12,50 +12,77 @@ param (
     $DesktopGroupName = "XD*P10SLHS",
 
     [IO.FileInfo]
-    $OutFile = "D:\diag\ProcDump-$(Get-Date -Format 'yyyyMMddHHmmss').json"
+    $OutFile = "D:\Diagnostics\Get-Process_$(Get-Date -Format 'yyyyMMddHHmmss').json"
 )
 
 # TODO: probably need this in a wrapper since the SessionDebug class will depend
 # on it, and '#requires' won't auto-load snapins.
 Add-PSSnapin Citrix.Broker.Admin.V2 -ErrorAction Stop
 
+# high-level session states we're interested in for debugging
 enum SessionState {
     Unknown
     Hung
     Destroyed
-    MiraculousRecovery
+    Working
     QUERY_FAILED
 }
 
-# helper class to debug hung VMs/sessions
+# remediation steps we may take
+enum DebugAction {
+    StartJob
+    ReceiveJob
+    Restart
+    None
+}
+
+# helper class to debug VMs/sessions
 class SessionDebug {
 
     # properties
-    [string] $AdminAddress
-    [int] $SessionUid
-    [bool] $LooksHung
-    [SessionState] $SessionState
-    [Management.Automation.JobState] $Diagnostics
-    [Citrix.Broker.Admin.SDK.Session] $BrokerSession
     [Citrix.Broker.Admin.SDK.Machine] $BrokerMachine
-    hidden [int] $JobId
-
+    [Citrix.Broker.Admin.SDK.Session] $BrokerSession
+    [SessionState] $SessionState
+    [string] $AdminAddress
+    [bool] $LooksHung
+    [bool] $RestartIssued
+    [int] $SessionUid
+    [Job] $Job
+    [JobState] $JobState
+    [IO.FileInfo] $OutFile
+    [DebugAction] $SuggestedAction
+    [DebugAction[]] $ActionLog
+    
     # constructors
     SessionDebug ([string] $AdminAddress, [int] $SessionUid) {
-        $this.Initialize($AdminAddress, $SessionUid)
+        $this.Initialize( 
+            $AdminAddress, 
+            $SessionUid, 
+            "D:\Diagnostics\Get-Process_$(Get-Date -Format 'yyyyMMddHHmmss').json"
+        )
     }
-    
-    SessionDebug ([string] $UidAtAddress) {
-        ([int] $SessionUid, [string] $AdminAddress) = $UidAtAddress -split '@'
-        $this.Initialize($AdminAddress, $SessionUid)
+
+    SessionDebug ([string] $AdminAddress, [int] $SessionUid, [IO.FileInfo] $OutFile) {
+        $this.Initialize($AdminAddress, $SessionUid, $OutFile)
     }
 
     # methods
-    hidden [void] Initialize ( [string] $AdminAddress, [int] $SessionUid ) {
+    hidden [void] Initialize ([string] $AdminAddress, [int] $SessionUid, [IO.FileInfo] $OutFile) {
         $this.AdminAddress = $AdminAddress
-        $this.DiagnosticStatus = [JobState]::NotStarted
-        $this.JobId = -1
+        $this.SessionUid = $SessionUid
+        $this.OutFile = $OutFile
+        $this.LooksHung = $false
+        $this.RestartIssued = $false
+        $this.JobState = [JobState]::NotStarted
+        $this.SuggestedAction = [DebugAction]::None
+        
+        # Pull session/machine info from DDCs
         $this.Refresh()
+        
+        if ($this.LooksHung) {
+            # if it's hung, run some diagnostics
+            $this.StartJob($OutFile)
+        }
     }
 
     [void] Refresh() {
@@ -87,42 +114,67 @@ class SessionDebug {
         catch { $this.BrokerMachine = $null }
 
         
-        # see if it looks like it's still hung
+        # determine if session is working or hung
         if ($this.BrokerMachine) {
             $tbm = $this.BrokerMachine
             if ($tbm.LastConnectionFailure -eq 'None') {
                 # if this happens, we're probably not correctly diagnosing sessions 
                 # as "hung" in the first place
-                $this.SessionState = [SessionState]::MiraculousRecovery
+                $this.SessionState = [SessionState]::Working
             }
             
             $this.LooksHung = ($tbm.LastConnectionFailure -in (Get-ValidFailureReason)) -and
-            ($tbm.IsPhysical -eq $false) -and
-            ($tbm.InMaintenanceMode -eq $false) -and
-            ($tbm.SessionsEstablished -eq 1)
+                ($tbm.IsPhysical -eq $false)        -and
+                ($tbm.InMaintenanceMode -eq $false) -and
+                ($tbm.SessionsEstablished -eq 1)
             
             if ($this.LooksHung) { $this.SessionState = [SessionState]::Hung }
         }
 
-        # start diagnostics, if we haven't yet.
-        if (($this.Diagnostics = [JobState]::NotStarted) -and ($this.JobId -eq -1)) {
-            $this.RunDiagnostics($script:OutFile)
+        # refresh job status
+        if ($this.Job) {
+            try { 
+                $this.Job = Get-Job -Uid $this.Job.InstanceId -ErrorAction 'Stop'
+                $this.JobState = $this.Job.State
+            }
+            catch { $this.JobState = [JobState]::Failed }
         }
     }
 
-    [void] RunDiagnostics([IO.FileInfo] $OutFile) {
-        # if we don't KNOW where to invoke this, immediately fail the job
-        if (-not $this.BrokerSession.DNSName) {
-            $this.Diagnostics = [JobState]::Failed
+    [void] UpdateSuggestedAction () {
+        if ($this.SuggestedAction -and ($this.SuggestedAction -eq $this.GetLastAction())) {
+
         }
-        elseif ($this.JobId -eq -1) {
-            # no job running yet, so fire it off
+        switch ($this.SuggestedAction) {
+            # once we figure this out, probably want to end this with a default case and just return
+            [DebugAction]::None { return }
+            [DebugAction]::StartJob { }
+            [DebugAction]::ReceiveJob { }
+            [DebugAction]::Restart { }
+            default { return }
+        }
+    }
+
+    [DebugAction] GetLastAction () { return $this.ActionLog[-1] }
+
+    [void] StartJob([IO.FileInfo] $OutFile) {
+        if (-not $this.BrokerSession.DNSName) {
+            # if we don't know where to invoke this, pre-emptively fail the job
+            $this.JobState = [JobState]::Failed
+            return
+        }
+        elseif ($this.Job -or ($this.JobState -eq [JobState]::Failed)) { 
+            # there's either a job already, or it failed
+            return 
+        }
+        else {
+            # good to go -- set up remote diagnostics job
             $icmParams = @{
                 ComputerName = $this.BrokerSession.DNSName
                 AsJob        = $true
                 ErrorAction  = 'Stop'
                 ScriptBlock  = {
-                    # export running processes to a json file
+                    # export running processes to a json file for better detail
                     $of = ${using:OutFile}
                     try {
                         if (-not (Test-Path $of.Directory)) {
@@ -134,13 +186,13 @@ class SessionDebug {
                         
                     }
                     catch {
-                        # log the exception before throwing it back to the job invoker
+                        # export and log the exception before throwing it back to the job invoker
                         $of = '{0}\{1}_ERROR.{2}' -f $of.Directory, $of.BaseName, $of.Extension
                         ConvertTo-Json -Depth 5 -InputObject $_ | Out-File -FilePath $of
                         throw $_
                     }
 
-                    # proc dumps can be huge, so we'll try to zip it
+                    # proc dumps get big, so we'll try to zip it
                     if (Test-Path $of) {
                         $outZip = '{0}\{1}.zip' -f $of.Directory, $of.BaseName
                         try {
@@ -152,14 +204,13 @@ class SessionDebug {
                     }
                 }
             }
-            $job = Invoke-Command @icmParams
-            $this.JobId = $job.Id
-            $this.Diagnostics = $job.State
-        }
-        else {
-            # nonono, split refresh and run into separate methods. Gotta go though.
-            # Might make sense to just make the job itself a property?
-            $this.Diagnostics = Get-Job -Id 
+
+            # fire it off
+            try {
+                $this.Job = Invoke-Command @icmParams
+                $this.JobState = $this.Job.State
+            }
+            catch { $this.JobState = [JobState]::Failed }
         }
     }
 }
