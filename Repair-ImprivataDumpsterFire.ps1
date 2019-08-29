@@ -12,7 +12,10 @@ param (
     $DesktopGroupName = "XD*P10SLHS",
 
     [IO.FileInfo]
-    $OutFile = "D:\Diagnostics\Get-Process_$(Get-Date -Format 'yyyyMMddHHmmss').json"
+    $OutFile = "D:\Diagnostics\Get-Process_$(Get-Date -Format 'yyyyMMddHHmmss').json",
+
+    [int]
+    $TimeOut = 120
 )
 
 # TODO: probably need this in a wrapper since the SessionDebug class will depend
@@ -31,9 +34,10 @@ enum SessionState {
 # remediation steps we may take
 enum DebugAction {
     StartJob
+    RefreshJob
     ReceiveJob
     Restart
-    None
+    Ignore
 }
 
 # helper class to debug VMs/sessions
@@ -46,46 +50,52 @@ class SessionDebug {
     [string] $AdminAddress
     [bool] $LooksHung
     [bool] $RestartIssued
+    [bool] $DebuggingComplete
+    [int] $TimeOut
     [int] $SessionUid
     [Job] $Job
     [JobState] $JobState
+    [object[]] $ActionResult
     [IO.FileInfo] $OutFile
-    [DebugAction] $SuggestedAction
-    [DebugAction[]] $ActionLog
+    [string] $SuggestedAction
+    [string[]] $ActionLog
+    [string[]] $DebugInfo
     
     # constructors
     SessionDebug ([string] $AdminAddress, [int] $SessionUid) {
         $this.Initialize( 
             $AdminAddress, 
             $SessionUid, 
-            "D:\Diagnostics\Get-Process_$(Get-Date -Format 'yyyyMMddHHmmss').json"
+            "D:\Diagnostics\Get-Process_$(Get-Date -Format 'yyyyMMddHHmmss').json",
+            120
         )
     }
 
-    SessionDebug ([string] $AdminAddress, [int] $SessionUid, [IO.FileInfo] $OutFile) {
-        $this.Initialize($AdminAddress, $SessionUid, $OutFile)
+    SessionDebug ([string] $AdminAddress, [int] $SessionUid, [IO.FileInfo] $OutFile, [int] $TimeOut) {
+        $this.Initialize($AdminAddress, $SessionUid, $OutFile, $TimeOut)
     }
 
     # methods
-    hidden [void] Initialize ([string] $AdminAddress, [int] $SessionUid, [IO.FileInfo] $OutFile) {
+    hidden [void] Initialize ([string] $AdminAddress, [int] $SessionUid, [IO.FileInfo] $OutFile, [int] $TimeOut) {
         $this.AdminAddress = $AdminAddress
         $this.SessionUid = $SessionUid
         $this.OutFile = $OutFile
+        $this.TimeOut = $TimeOut
         $this.LooksHung = $false
         $this.RestartIssued = $false
         $this.JobState = [JobState]::NotStarted
-        $this.SuggestedAction = [DebugAction]::None
         
-        # Pull session/machine info from DDCs
+        # Pull session/machine info from DDCs, refresh job info, and suggested actions
         $this.Refresh()
         
         if ($this.LooksHung) {
-            # if it's hung, run some diagnostics
-            $this.StartJob($OutFile)
+            $this.DebuggingComplete = $false
+            $this.StartSuggestedAction()
         }
+        else { $this.DebuggingComplete = $true }
     }
 
-    [void] Refresh() {
+    [SessionDebug] Refresh() {
         $this.SessionState = [SessionState]::Unknown
 
         # refresh session
@@ -121,6 +131,7 @@ class SessionDebug {
                 # if this happens, we're probably not correctly diagnosing sessions 
                 # as "hung" in the first place
                 $this.SessionState = [SessionState]::Working
+                $this.DebuggingComplete = $true
             }
             
             $this.LooksHung = ($tbm.LastConnectionFailure -in (Get-ValidFailureReason)) -and
@@ -128,39 +139,115 @@ class SessionDebug {
                 ($tbm.InMaintenanceMode -eq $false) -and
                 ($tbm.SessionsEstablished -eq 1)
             
-            if ($this.LooksHung) { $this.SessionState = [SessionState]::Hung }
+            if ($this.LooksHung) { 
+                $this.SessionState = [SessionState]::Hung
+            }
+        }
+        else { 
+            # no machine tied to that session anymore, nothing to do
+            $this.DebuggingComplete = $true 
         }
 
         # refresh job status
+        $this.RefreshJob()
+
+        # update debugging recommendations
+        $this.UpdateSuggestedAction()
+
+        return $this
+    }
+
+    [void] RefreshJob () {
+
         if ($this.Job) {
-            try { 
-                $this.Job = Get-Job -Uid $this.Job.InstanceId -ErrorAction 'Stop'
+            try {
+                # update job-related properties
+                $this.Job = Get-Job -InstanceId $this.Job.InstanceId -ErrorAction 'Stop'
                 $this.JobState = $this.Job.State
             }
-            catch { $this.JobState = [JobState]::Failed }
+            catch { 
+                $this.JobState = [JobState]::Failed 
+                $this.DebugInfo += "RefreshJob(): Get-Job exception: $($_.Exception.Message)"
+            }
+
+            if ((Get-Date) -gt $this.Job.PSBeginTime.AddSeconds($this.TimeOut)) {
+                # we're past our timeout, so consider the job "failed". We'll still leave
+                # the job alone in case it has a chance to finish before we reset the VM.
+                $this.JobState = [JobState]::Failed
+                $this.DebugInfo += "RefreshJob(): Job timed out."
+            }
         }
+    }
+    [DebugAction] GetSuggestedAction () {
+        return $this.SuggestedAction
     }
 
     [void] UpdateSuggestedAction () {
-        if ($this.SuggestedAction -and ($this.SuggestedAction -eq $this.GetLastAction())) {
-
+        # only call this from Refresh()
+        if ((-not $this.LooksHung) -or $this.DebuggingComplete) { 
+            # nothing's wrong, or there's nothing we can do, so don't touch it
+            $this.SuggestedAction = [DebugAction]::Ignore
+            $this.DebuggingComplete = $true
         }
-        switch ($this.SuggestedAction) {
-            # once we figure this out, probably want to end this with a default case and just return
-            [DebugAction]::None { return }
-            [DebugAction]::StartJob { }
-            [DebugAction]::ReceiveJob { }
-            [DebugAction]::Restart { }
-            default { return }
+        elseif ($this.ActionLog) {
+            # we just performed an action on a hung session. suggest the next one
+            switch ($this.ActionLog[-1]) {    
+                'Ignore' { }
+                'StartJob' {
+                    # just fired a job, so we'll watch for it to finish
+                    $this.SuggestedAction = [DebugAction]::RefreshJob
+                }
+                'RefreshJob' {
+                    $this.RefreshJob()
+                    if ($this.JobState -eq [JobState]::Failed) {
+                        $this.SuggestedAction = [DebugAction]::Restart
+                    }
+                    elseif ($this.Job.PSEndTime) {
+                        $this.SuggestedAction = [DebugAction]::ReceiveJob
+                    }
+                }
+                'ReceiveJob' {
+                    $this.SuggestedAction = [DebugAction]::Restart
+                }
+                'Restart' {
+                    $this.SuggestedAction = [DebugAction]::Ignore
+                    $this.DebuggingComplete = $true
+                }
+            }
+        }
+        else {
+            # session is hung and we haven't touched it yet, suggest starting a diagnostics job
+            $this.SuggestedAction = [DebugAction]::StartJob
+            $this.DebugInfo += "UpdateSuggestedAction(): ActionLog was empty. Suggesting StartJob."
         }
     }
 
-    [DebugAction] GetLastAction () { return $this.ActionLog[-1] }
+    [void] StartAction([DebugAction] $Action) {
+        switch ($Action) {
+            'StartJob' { $this.StartJob() }
+            'RefreshJob' { $this.RefreshJob() }
+            'ReceiveJob' { $this.ReceiveJob() } 
+            'Restart' { $this.Restart() }
+            'Ignore' { $this.ActionLog += 'Ignore'; return }
+            default { $this.DebugInfo += "StartAction(): $Action was passed, but I couldn't figure out what to do with it." }
+        }
+    }
 
-    [void] StartJob([IO.FileInfo] $OutFile) {
+    [void] StartSuggestedAction () {
+        $action = $this.SuggestedAction
+        if ($action) {
+            $this.StartAction($action)
+        }
+        else { $this.DebugInfo += "StartSuggestedAction(): SuggestedAction was null." }
+    }
+
+    [void] StartJob() {
+        $this.ActionLog += [DebugAction]::StartJob
+
         if (-not $this.BrokerSession.DNSName) {
             # if we don't know where to invoke this, pre-emptively fail the job
             $this.JobState = [JobState]::Failed
+            $this.DebugInfo += "StartJob(): BrokerSession.DNSName was null."
             return
         }
         elseif ($this.Job -or ($this.JobState -eq [JobState]::Failed)) { 
@@ -169,21 +256,21 @@ class SessionDebug {
         }
         else {
             # good to go -- set up remote diagnostics job
+            $of = $this.OutFile
             $icmParams = @{
                 ComputerName = $this.BrokerSession.DNSName
                 AsJob        = $true
                 ErrorAction  = 'Stop'
                 ScriptBlock  = {
                     # export running processes to a json file for better detail
-                    $of = ${using:OutFile}
+                    $of = ${using:of}
                     try {
                         if (-not (Test-Path $of.Directory)) {
                             New-Item -ItemType Directory -Path $of.Directory -ErrorAction 'Stop' | Out-Null
                         }
                         Get-Process -IncludeUserName -ErrorAction 'Stop' |
                             ConvertTo-Json -Depth 5 |
-                            Out-File -FilePath ${using:$OutFile}
-                        
+                            Out-File -FilePath $of
                     }
                     catch {
                         # export and log the exception before throwing it back to the job invoker
@@ -194,11 +281,10 @@ class SessionDebug {
 
                     # proc dumps get big, so we'll try to zip it
                     if (Test-Path $of) {
-                        $outZip = '{0}\{1}.zip' -f $of.Directory, $of.BaseName
+                        $outZip = "$of" -replace '\.[^\.]+$','.zip'
                         try {
                             Compress-Archive -Path $of -DestinationPath $outZip -Update -ErrorAction 'Stop'
                             Remove-Item -Path $of -ErrorAction 'Stop'
-                            Get-Item 
                         } 
                         catch { Write-Warning $_.Exception.Message }
                     }
@@ -210,7 +296,48 @@ class SessionDebug {
                 $this.Job = Invoke-Command @icmParams
                 $this.JobState = $this.Job.State
             }
-            catch { $this.JobState = [JobState]::Failed }
+            catch { 
+                $this.JobState = [JobState]::Failed 
+                $this.DebugInfo += "StartJob(): $($_.Exception.Message)"
+            }
+        }
+    }
+
+    [void] ReceiveJob () {
+        $this.ActionLog += [DebugAction]::ReceiveJob
+
+        if ($this.Job) {
+            try {
+                $rjParams = @{
+                    Job           = $this.Job
+                    Wait          = $true
+                    AutoRemoveJob = $true
+                    ErrorAction   = 'Stop'
+                }
+                $this.ActionResult += Receive-Job @rjParams
+            }
+            catch { $this.ActionResult += $_.Exception }
+        }
+        else {
+            $this.DebugInfo += "ReceiveJob(): Job was null."
+        }
+    }
+
+    [void] Restart() {
+        if ($this.BrokerMachine -and -not $this.RestartIssued) {
+            # we have a machine, and we haven't tried restarting it yet
+            try {
+                $nbhpaParams = @{
+                    AdminAddress = $this.AdminAddress
+                    MachineName = $this.BrokerMachine.MachineName
+                    Action = 'Reset'
+                    ErrorAction = 'Stop'
+                }
+                $this.ActionResult += New-BrokerHostingPowerAction @nbhpaParams
+            }
+            catch { $this.ActionResult += $_.Exception }
+
+            $this.RestartIssued = $true
         }
     }
 }
