@@ -62,7 +62,7 @@ class SessionDebug {
     [SessionState] $SessionState
     [string] $AdminAddress
     [string] $DNSName
-    [string] $AssociatedUserUPNs
+    [string] $User
     [bool] $LooksHung
     [bool] $RestartIssued
     [bool] $DebuggingComplete
@@ -107,7 +107,7 @@ class SessionDebug {
 
         if ($this.BrokerSession) {
             $this.DNSName = $this.BrokerSession.DNSName
-            $this.AssociatedUserUPNs = $this.BrokerSession.AssociatedUserUPNs
+            $this.User = $this.BrokerSession.UserUPN
         }
         
         if ($this.LooksHung) {
@@ -311,25 +311,29 @@ class SessionDebug {
         }
         else {
             # good to go -- set up remote diagnostics job
+            
+            # deserializer messes with properties/methods available to the remote job
             $of = $this.OutFile
+            $dir = $this.OutFile.Directory
             $icmParams = @{
                 ComputerName = $this.BrokerSession.DNSName
                 AsJob        = $true
                 ErrorAction  = 'Stop'
                 ScriptBlock  = {
                     $of = ${using:of}
+                    $dir = ${using:dir}
                     try {
-                        if (-not $of.Directory.Exists) {
-                            New-Item -ItemType Directory -Path $of.Directory -ErrorAction 'Stop' | Out-Null
+                        if (-not (Test-Path -Path $dir)) {
+                            New-Item -ItemType Directory -Path $dir -ErrorAction 'Stop' | Out-Null
                         }
                         
                         # remove old dumps before creating another
-                        Get-ChildItem -Path $of.Directory -Name "*.dmp" | Remove-Item -Confirm:$false -Force
+                        Remove-Item -Path "$dir\*.dmp" -Confirm:$false -Force
                         C:\Tools\Monitors\procdump64.exe -accepteula -W -ma ssomanhost64 "$of"
                     }
                     catch {
                         # export and log the exception before throwing it back to the job invoker
-                        $of = '{0}\{1}_ERROR.json' -f ($of.Directory, $of.BaseName)
+                        $of = '{0}\ERROR.json' -f $dir
                         ConvertTo-Json -Depth 5 -InputObject $_ | Out-File -FilePath $of
                         throw $_
                     }
@@ -503,7 +507,7 @@ function Repair-Session {
         $MailServer = 'mailgate.slhs.org',
 
         [int]
-        $TimeOut = 60
+        $TimeOut = (${script:TimeOut} + 10)
     )
 
     process {
@@ -524,7 +528,7 @@ function Repair-Session {
                 [void] $s.Refresh()
             }
         }
-        $mailProps = @('DNSName', 'AssociatedUserUPNs', 'AdminAddress', 'LooksHung', 'RestartIssued', 'SessionUid',
+        $mailProps = @('DNSName', 'User', 'AdminAddress', 'LooksHung', 'RestartIssued', 'SessionUid',
             'DebuggingComplete', 'JobReceived', 'JobState', 'ActionLog', 'ActionResult', 'OutFile', 'DebugInfo')
         $mailBody = $s | Select-Object -Property $mailProps | ConvertTo-FlatObject | Out-String
 
@@ -554,10 +558,8 @@ catch {
 $hungSession = @(Get-HungSession -AdminAddress $AdminAddress -DesktopGroupName $DesktopGroupName)
 
 # debug and repair hung sessions
-if ($hungSession) { 
-    $sessionDebug = foreach ($hs in $hungSession) {
-        [SessionDebug]::new($hs.ControllerDNSName, $hs.SessionUid, $OutFile, $TimeOut)
-    }
+if ($hungSession) {
+    $sessionDebug = $hungSession.ForEach({[SessionDebug]::new($_.ControllerDNSName, $_.SessionUid, $OutFile, $TimeOut)})
     $sessionDebug | Repair-Session
 }
 else { "No hung sessions found." }
