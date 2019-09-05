@@ -1,10 +1,31 @@
+<#
+.NOTES
+    Created on:   09/05/2019
+    Created by:   Andy Simmons
+    Organization: St. Luke's Health System
+    FileName:     Repair-ImprivataDumpsterFire.ps1
+
+.SYNOPSIS
+    Script written to help troubleshoot issues specific to the Imprivata One-Sign
+    go-live. Sessions will hang at the "Welcome" screen shown during initial login,
+    and we needed an automated way to detect that, run some diagnostics, and reboot.
+#>
 using namespace System.Management.Automation 
 #Requires -Version 5
 
 [CmdletBinding()]
 param (
+    [string[]]
+    $SnapIn = @('Citrix.Broker.Admin.V2', 'Citrix.Host.Admin.V2'),
+
+    [string[]]
+    $AdminAddress = @('ctxddc01', 'sltctxddc01'),
+
     [string]
     $DesktopGroupName = "XD*P10SLHS",
+
+    [IO.FileInfo]
+    $ScriptPath = ".\Repair-ImprivataDumpsterFire.ps1",
 
     [IO.FileInfo]
     $OutFile = "D:\Diagnostics\PROCESSNAME_YYMMDD_HHMMSS.dmp",
@@ -13,6 +34,7 @@ param (
     $TimeOut = 30
 )
 
+#region classes
 # high-level session states we're interested in for debugging
 enum SessionState {
     Unknown
@@ -40,6 +62,7 @@ class SessionDebug {
     [SessionState] $SessionState
     [string] $AdminAddress
     [string] $DNSName
+    [string] $AssociatedUserUPNs
     [bool] $LooksHung
     [bool] $RestartIssued
     [bool] $DebuggingComplete
@@ -84,6 +107,7 @@ class SessionDebug {
 
         if ($this.BrokerSession) {
             $this.DNSName = $this.BrokerSession.DNSName
+            $this.AssociatedUserUPNs = $this.BrokerSession.AssociatedUserUPNs
         }
         
         if ($this.LooksHung) {
@@ -211,29 +235,33 @@ class SessionDebug {
                 'Ignore' { }
                 'StartJob' {
                     # just fired a job, so we'll watch for it to finish
+                    $this.DebugInfo += "UpdateSuggestedAction(): Job started. Suggest RefreshJob()."
                     $this.SuggestedAction = [DebugAction]::RefreshJob
                 }
                 'RefreshJob' {
                     $this.RefreshJob()
                     if ($this.JobState -eq [JobState]::Failed) {
                         if ($this.Job.HasMoreData) { 
-                            # job failed or timed out, but has output we can receive
+                            
+                            $this.DebugInfo += "UpdateSuggestedAction(): Job failed or timed out. Suggest ReceiveJob()."
                             $this.SuggestedAction = [DebugAction]::ReceiveJob 
                         }
                         else { 
-                            # job failed and produced no output, just restart it
+                            $this.DebugInfo += "UpdateSuggestedAction(): Job failed and produced no output. Suggest Restart()."
                             $this.SuggestedAction = [DebugAction]::Restart 
                         }
                     }
                     elseif ($this.Job.PSEndTime) {
-                        # job's done, receive it
+                        $this.DebugInfo += "UpdateSuggestedAction(): Job is done. Suggest ReceiveJob()."
                         $this.SuggestedAction = [DebugAction]::ReceiveJob
                     }
                 }
                 'ReceiveJob' {
+                    $this.DebugInfo += "UpdateSuggestedAction(): Job received. Suggest Restart()."
                     $this.SuggestedAction = [DebugAction]::Restart
                 }
                 'Restart' {
+                    $this.DebugInfo += "UpdateSuggestedAction(): Restart was requested. Nothing more to do."
                     $this.SuggestedAction = [DebugAction]::Ignore
                     $this.DebuggingComplete = $true
                 }
@@ -242,7 +270,7 @@ class SessionDebug {
         else {
             # session is hung and we haven't touched it yet, suggest starting a diagnostics job
             $this.SuggestedAction = [DebugAction]::StartJob
-            $this.DebugInfo += "UpdateSuggestedAction(): ActionLog was empty. Suggesting StartJob."
+            $this.DebugInfo += "UpdateSuggestedAction(): ActionLog was empty. Suggest StartJob()."
         }
     }
 
@@ -271,7 +299,6 @@ class SessionDebug {
     }
 
     hidden [void] StartJob() {
-
         if (-not $this.BrokerSession.DNSName) {
             # if we don't know where to invoke this, pre-emptively fail the job
             $this.JobState = [JobState]::Failed
@@ -290,18 +317,14 @@ class SessionDebug {
                 AsJob        = $true
                 ErrorAction  = 'Stop'
                 ScriptBlock  = {
-                    # export running processes to a json file for better detail
                     $of = ${using:of}
                     try {
                         if (-not $of.Directory.Exists) {
                             New-Item -ItemType Directory -Path $of.Directory -ErrorAction 'Stop' | Out-Null
                         }
-                        <# just kidding -- need procdump.exe for this specific issue. Commenting for now
-                        Get-Process -IncludeUserName -ErrorAction 'Stop' |
-                            ConvertTo-Json -Depth 5 |
-                            Out-File -FilePath $of
-                        #>
-                        Get-ChildItem -Path $of.Directory -Name "*.$($of.Extesnion)" | Remove-Item -Confirm:$false -Force
+                        
+                        # remove old dumps before creating another
+                        Get-ChildItem -Path $of.Directory -Name "*.dmp" | Remove-Item -Confirm:$false -Force
                         C:\Tools\Monitors\procdump64.exe -accepteula -W -ma ssomanhost64 "$of"
                     }
                     catch {
@@ -310,19 +333,6 @@ class SessionDebug {
                         ConvertTo-Json -Depth 5 -InputObject $_ | Out-File -FilePath $of
                         throw $_
                     }
-
-                    # this won't really work here since procdump.exe interprets parts of the filename
-                    # we could work around it but I need to get this in sooner than later, it's low priority
-                    # to compress the dump file (cuts the dump size in about half).
-                    # if we ever use this for other reasons, 
-                    <#if (Test-Path $of) {
-                        $outZip = "$of" -replace '\.[^\.]+$','.zip'
-                        try {
-                            Compress-Archive -Path $of -DestinationPath $outZip -Update -ErrorAction 'Stop'
-                            Remove-Item -Path $of -ErrorAction 'Stop'
-                        } 
-                        catch { Write-Warning $_.Exception.Message }
-                    }#>
                 }
             }
 
@@ -375,6 +385,9 @@ class SessionDebug {
         }
     }
 }
+#endregion classes
+
+#region functions
 
 # returns failure reasons we typically only see on hung sessions
 function Get-ValidFailureReason {
@@ -434,3 +447,117 @@ function Get-HungSession {
         }
     }
 }
+
+function ConvertTo-FlatObject {
+    param
+    (
+        [Parameter(Mandatory, ValueFromPipeline)]
+        [ValidateNotNullOrEmpty()]
+        [object[]] $InputObject,
+        
+        [String] 
+        $Delimiter = "`n"   
+    )
+  
+    process {
+        $InputObject | ForEach-Object {
+
+            $flatObject = New-Object PSObject
+
+            # Loop through each property on the input object
+            foreach ($property in $_.PSObject.Properties) {
+                # If it's a collection, join everything into a string.
+                if ($property.TypeNameOfValue -match '\[\]$') {
+                    $flatValue = $property.Value -Join $Delimiter
+                }
+                else { $flatValue = $property.Value }
+
+                $addMemberParams = @{
+                    InputObject = $flatObject
+                    MemberType  = 'NoteProperty'
+                    Name        = $property.Name
+                    Value       = $flatValue
+                }
+                Add-Member @addMemberParams
+            }
+
+            $flatObject
+        }
+    }
+}
+
+function Repair-Session {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory, ValueFromPipeline)]
+        [SessionDebug[]]
+        $Session,
+
+        [MailAddress[]]
+        $MailTo = 'simmonsa@slhs.org',
+
+        [MailAddress]
+        $MailFrom = 'SessionDebug_DoNotReply@slhs.org',
+
+        [string]
+        $MailServer = 'mailgate.slhs.org',
+
+        [int]
+        $TimeOut = 60
+    )
+
+    process {
+        foreach ($s in $Session) {
+            $endBy = (Get-Date).AddSeconds($TimeOut)
+            $s.Refresh()
+
+            do {
+                $s.StartSuggestedAction()
+                Start-Sleep -Seconds 5
+                [void] $s.Refresh()
+            }
+            until ($s.DebuggingComplete -or ((Get-Date) -gt $endBy))
+
+            # if we timed out, try one last action before bailing
+            if (-not $s.DebuggingComplete) {
+                $s.StartSuggestedAction()
+                [void] $s.Refresh()
+            }
+        }
+        $mailProps = @('DNSName', 'AssociatedUserUPNs', 'AdminAddress', 'LooksHung', 'RestartIssued', 'SessionUid',
+            'DebuggingComplete', 'JobReceived', 'JobState', 'ActionLog', 'ActionResult', 'OutFile', 'DebugInfo')
+        $mailBody = $s | Select-Object -Property $mailProps | ConvertTo-FlatObject | Out-String
+
+        $smmParams = @{
+            From       = $MailFrom
+            To         = $MailTo
+            SmtpServer = $MailServer
+            Subject    = "Hung Session Repair Attempt: $($s.DNSName)"
+            Body       = $mailBody
+        }
+        Send-MailMessage @smmParams
+    }
+}
+
+#endregion functions
+
+#region main
+
+# load snapins
+try { Add-PSSnapin -Name $SnapIn -ErrorAction 'Stop' -PassThru }
+catch {
+    Write-Error "Couldn't load one or more required snap-ins. Bailing."
+    throw $_.Exception
+}
+
+# look for hung sessions
+$hungSession = @(Get-HungSession -AdminAddress $AdminAddress -DesktopGroupName $DesktopGroupName)
+
+# debug and repair hung sessions
+if ($hungSession) { 
+    $sessionDebug = foreach ($hs in $hungSession) {
+        [SessionDebug]::new($hs.ControllerDNSName, $hs.SessionUid, $OutFile, $TimeOut)
+    }
+    $sessionDebug | Repair-Session
+}
+else { "No hung sessions found." }
