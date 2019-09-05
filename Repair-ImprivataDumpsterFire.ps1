@@ -1,26 +1,17 @@
 using namespace System.Management.Automation 
 #Requires -Version 5
-#Requires -PSSnapin Citrix.Broker.Admin.V2
 
 [CmdletBinding()]
 param (
-    [Parameter(Mandatory)]
-    [string[]]
-    $AdminAddress,
-
     [string]
     $DesktopGroupName = "XD*P10SLHS",
 
     [IO.FileInfo]
-    $OutFile = "D:\Diagnostics\Get-Process_$(Get-Date -Format 'yyyyMMddHHmmss').json",
+    $OutFile = "D:\Diagnostics\PROCESSNAME_YYMMDD_HHMMSS.dmp",
 
     [int]
-    $TimeOut = 120
+    $TimeOut = 30
 )
-
-# TODO: probably need this in a wrapper since the SessionDebug class will depend
-# on it, and '#requires' won't auto-load snapins.
-Add-PSSnapin Citrix.Broker.Admin.V2 -ErrorAction Stop
 
 # high-level session states we're interested in for debugging
 enum SessionState {
@@ -48,9 +39,11 @@ class SessionDebug {
     [Citrix.Broker.Admin.SDK.Session] $BrokerSession
     [SessionState] $SessionState
     [string] $AdminAddress
+    [string] $DNSName
     [bool] $LooksHung
     [bool] $RestartIssued
     [bool] $DebuggingComplete
+    [bool] $JobReceived
     [int] $TimeOut
     [int] $SessionUid
     [Job] $Job
@@ -66,8 +59,8 @@ class SessionDebug {
         $this.Initialize( 
             $AdminAddress, 
             $SessionUid, 
-            "D:\Diagnostics\Get-Process_$(Get-Date -Format 'yyyyMMddHHmmss').json",
-            120
+            "D:\Diagnostics\PROCESSNAME_YYMMDD_HHMMSS.dmp",
+            30
         )
     }
 
@@ -84,9 +77,14 @@ class SessionDebug {
         $this.LooksHung = $false
         $this.RestartIssued = $false
         $this.JobState = [JobState]::NotStarted
+        $this.JobReceived = $false
         
         # Pull session/machine info from DDCs, refresh job info, and suggested actions
         $this.Refresh()
+
+        if ($this.BrokerSession) {
+            $this.DNSName = $this.BrokerSession.DNSName
+        }
         
         if ($this.LooksHung) {
             $this.DebuggingComplete = $false
@@ -127,6 +125,7 @@ class SessionDebug {
         # determine if session is working or hung
         if ($this.BrokerMachine) {
             $tbm = $this.BrokerMachine
+
             if ($tbm.LastConnectionFailure -eq 'None') {
                 # if this happens, we're probably not correctly diagnosing sessions 
                 # as "hung" in the first place
@@ -139,6 +138,12 @@ class SessionDebug {
                 ($tbm.InMaintenanceMode -eq $false) -and
                 ($tbm.SessionsEstablished -eq 1)
             
+            # DELETE THIS LATER - having trouble hanging sessions on purpose to troubleshoot
+            if ($tbm.AssociatedUserUPNs -contains 'simmonsa@slhs.org' -and $tbm.SessionsEstablished -eq 1) {
+                $this.LooksHung = $true
+                $this.DebuggingComplete = $false
+            }
+
             if ($this.LooksHung) { 
                 $this.SessionState = [SessionState]::Hung
             }
@@ -157,29 +162,40 @@ class SessionDebug {
         return $this
     }
 
-    [void] RefreshJob () {
+    hidden [void] RefreshJob () {
 
         if ($this.Job) {
             try {
                 # update job-related properties
-                $this.Job = Get-Job -InstanceId $this.Job.InstanceId -ErrorAction 'Stop'
+                $this.Job = Get-Job -Id $this.Job.Id -ErrorAction 'Stop'
                 $this.JobState = $this.Job.State
             }
-            catch { 
-                $this.JobState = [JobState]::Failed 
-                $this.DebugInfo += "RefreshJob(): Get-Job exception: $($_.Exception.Message)"
+            catch {
+                if ($_.CategoryInfo.Category -eq 'ObjectNotFound') {
+                    # job appears to have been removed - update the JobState property
+                    # to reflect the last known state of the job (if possible) and then
+                    # clear the job property
+                    if ($this.Job) { $this.JobState = $this.Job.State }
+                    
+                    $this.Job = $null
+                }
+                else {
+                    $this.JobState = [JobState]::Failed 
+                    $this.DebugInfo += "RefreshJob(): Get-Job exception: $($_.Exception.Message)"
+                }
             }
 
-            if ((Get-Date) -gt $this.Job.PSBeginTime.AddSeconds($this.TimeOut)) {
-                # we're past our timeout, so consider the job "failed". We'll still leave
-                # the job alone in case it has a chance to finish before we reset the VM.
-                $this.JobState = [JobState]::Failed
-                $this.DebugInfo += "RefreshJob(): Job timed out."
+            # check for job timeout
+            if ($this.Job.PSBeginTime -and -not $this.Job.PSEndTime) {
+                $expiration = $this.Job.PSBeginTime.AddSeconds($this.TimeOut)
+                if ((Get-Date) -gt $expiration) {
+                    # we're past our timeout, so consider the job "failed". We'll still leave
+                    # the job alone in case it has a chance to finish before we reset the VM.
+                    $this.JobState = [JobState]::Failed
+                    $this.DebugInfo += "RefreshJob(): Job timed out."
+                }
             }
         }
-    }
-    [DebugAction] GetSuggestedAction () {
-        return $this.SuggestedAction
     }
 
     [void] UpdateSuggestedAction () {
@@ -200,9 +216,17 @@ class SessionDebug {
                 'RefreshJob' {
                     $this.RefreshJob()
                     if ($this.JobState -eq [JobState]::Failed) {
-                        $this.SuggestedAction = [DebugAction]::Restart
+                        if ($this.Job.HasMoreData) { 
+                            # job failed or timed out, but has output we can receive
+                            $this.SuggestedAction = [DebugAction]::ReceiveJob 
+                        }
+                        else { 
+                            # job failed and produced no output, just restart it
+                            $this.SuggestedAction = [DebugAction]::Restart 
+                        }
                     }
                     elseif ($this.Job.PSEndTime) {
+                        # job's done, receive it
                         $this.SuggestedAction = [DebugAction]::ReceiveJob
                     }
                 }
@@ -222,15 +246,20 @@ class SessionDebug {
         }
     }
 
+    # Call all actions through this method so it gets logged accordingly
     [void] StartAction([DebugAction] $Action) {
         switch ($Action) {
             'StartJob' { $this.StartJob() }
             'RefreshJob' { $this.RefreshJob() }
             'ReceiveJob' { $this.ReceiveJob() } 
             'Restart' { $this.Restart() }
-            'Ignore' { $this.ActionLog += 'Ignore'; return }
-            default { $this.DebugInfo += "StartAction(): $Action was passed, but I couldn't figure out what to do with it." }
+            'Ignore' { }
+            default { 
+                $this.DebugInfo += "StartAction(): $Action was passed, but I couldn't figure out what to do with it." 
+                return
+            }
         }
+        $this.ActionLog += $Action
     }
 
     [void] StartSuggestedAction () {
@@ -241,8 +270,7 @@ class SessionDebug {
         else { $this.DebugInfo += "StartSuggestedAction(): SuggestedAction was null." }
     }
 
-    [void] StartJob() {
-        $this.ActionLog += [DebugAction]::StartJob
+    hidden [void] StartJob() {
 
         if (-not $this.BrokerSession.DNSName) {
             # if we don't know where to invoke this, pre-emptively fail the job
@@ -265,29 +293,36 @@ class SessionDebug {
                     # export running processes to a json file for better detail
                     $of = ${using:of}
                     try {
-                        if (-not (Test-Path $of.Directory)) {
+                        if (-not $of.Directory.Exists) {
                             New-Item -ItemType Directory -Path $of.Directory -ErrorAction 'Stop' | Out-Null
                         }
+                        <# just kidding -- need procdump.exe for this specific issue. Commenting for now
                         Get-Process -IncludeUserName -ErrorAction 'Stop' |
                             ConvertTo-Json -Depth 5 |
                             Out-File -FilePath $of
+                        #>
+                        Get-ChildItem -Path $of.Directory -Name "*.$($of.Extesnion)" | Remove-Item -Confirm:$false -Force
+                        C:\Tools\Monitors\procdump64.exe -accepteula -W -ma ssomanhost64 "$of"
                     }
                     catch {
                         # export and log the exception before throwing it back to the job invoker
-                        $of = '{0}\{1}_ERROR.{2}' -f $of.Directory, $of.BaseName, $of.Extension
+                        $of = '{0}\{1}_ERROR.json' -f ($of.Directory, $of.BaseName)
                         ConvertTo-Json -Depth 5 -InputObject $_ | Out-File -FilePath $of
                         throw $_
                     }
 
-                    # proc dumps get big, so we'll try to zip it
-                    if (Test-Path $of) {
+                    # this won't really work here since procdump.exe interprets parts of the filename
+                    # we could work around it but I need to get this in sooner than later, it's low priority
+                    # to compress the dump file (cuts the dump size in about half).
+                    # if we ever use this for other reasons, 
+                    <#if (Test-Path $of) {
                         $outZip = "$of" -replace '\.[^\.]+$','.zip'
                         try {
                             Compress-Archive -Path $of -DestinationPath $outZip -Update -ErrorAction 'Stop'
                             Remove-Item -Path $of -ErrorAction 'Stop'
                         } 
                         catch { Write-Warning $_.Exception.Message }
-                    }
+                    }#>
                 }
             }
 
@@ -303,18 +338,17 @@ class SessionDebug {
         }
     }
 
-    [void] ReceiveJob () {
-        $this.ActionLog += [DebugAction]::ReceiveJob
-
+    hidden [void] ReceiveJob () {
         if ($this.Job) {
             try {
                 $rjParams = @{
-                    Job           = $this.Job
+                    InstanceId    = $this.Job.InstanceId
                     Wait          = $true
                     AutoRemoveJob = $true
                     ErrorAction   = 'Stop'
                 }
                 $this.ActionResult += Receive-Job @rjParams
+                $this.JobReceived = $true
             }
             catch { $this.ActionResult += $_.Exception }
         }
@@ -323,7 +357,7 @@ class SessionDebug {
         }
     }
 
-    [void] Restart() {
+    hidden [void] Restart() {
         if ($this.BrokerMachine -and -not $this.RestartIssued) {
             # we have a machine, and we haven't tried restarting it yet
             try {
@@ -333,7 +367,7 @@ class SessionDebug {
                     Action = 'Reset'
                     ErrorAction = 'Stop'
                 }
-                $this.ActionResult += New-BrokerHostingPowerAction @nbhpaParams
+                $this.ActionResult += (New-BrokerHostingPowerAction @nbhpaParams | Format-List | Out-String)
             }
             catch { $this.ActionResult += $_.Exception }
 
@@ -354,8 +388,9 @@ function Get-HungSession {
         [string[]]
         $AdminAddress,
 
+        [Parameter(Mandatory)]
         [string]
-        $DesktopGroupName = ${script:DesktopGroupName},
+        $DesktopGroupName,
 
         [Parameter(HelpMessage = 'Connection failure reason(s) associated with hung sessions.')]
         [string[]]
@@ -373,6 +408,20 @@ function Get-HungSession {
         InMaintenanceMode   = $false
         SessionsEstablished = 1
     }
+    foreach ($a in $AdminAddress) {
+        $gbmParams.AdminAddress = $a
+        try {
+            Get-BrokerMachine @gbmParams | 
+            Select-Object *, @{ n = 'AdminAddress'; e = $a }
+        }
+        catch {
+            Write-Warning "Encountered an error looking for inaccessible broker machines on $a."
+            Write-Warning $_.Exception.Message
+        }
+    }
+    # debugging workaround since I can't easily simulate a hung session, so we'll
+    # also consider any session I'm connected to as "hung", regardless of last connection result.
+    $gbmParams.Filter = { AssociatedUserUPNs -contains 'simmonsa@slhs.org' }
     foreach ($a in $AdminAddress) {
         $gbmParams.AdminAddress = $a
         try {
