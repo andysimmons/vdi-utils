@@ -13,7 +13,7 @@
 using namespace System.Management.Automation 
 #Requires -Version 5
 
-[CmdletBinding()]
+[CmdletBinding(SupportsShouldProcess)]
 param (
     [string[]]
     $SnapIn = @('Citrix.Broker.Admin.V2', 'Citrix.Host.Admin.V2'),
@@ -25,13 +25,23 @@ param (
     $DesktopGroupName = "XD*P10SLHS",
 
     [IO.FileInfo]
-    $ScriptPath = ".\Repair-ImprivataDumpsterFire.ps1",
-
-    [IO.FileInfo]
     $OutFile = "D:\Diagnostics\PROCESSNAME_YYMMDD_HHMMSS.dmp",
 
     [int]
-    $TimeOut = 30
+    $TimeOut = 30,
+
+    [Parameter(HelpMessage = "Comma-separated list of email addresses (Ivanti's PS integration isn't great)")]
+    [MailAddress]
+    $MailTo = 'simmonsa@slhs.org',
+
+    [MailAddress]
+    $MailFrom = 'SessionDebug_DoNotReply@slhs.org',
+
+    [string]
+    $SmtpServer = 'mailgate.slhs.org',
+
+    [switch]
+    $SuppressEmailNotification
 )
 
 #region classes
@@ -105,16 +115,14 @@ class SessionDebug {
         # Pull session/machine info from DDCs, refresh job info, and suggested actions
         $this.Refresh()
 
+        # if it's hung upon instantiation, debugging isn't complete
+        $this.DebuggingComplete = -not $this.LooksHung
+
+        # preserve interesting session properties that would be lost on session termination
         if ($this.BrokerSession) {
             $this.DNSName = $this.BrokerSession.DNSName
             $this.User = $this.BrokerSession.UserUPN
         }
-        
-        if ($this.LooksHung) {
-            $this.DebuggingComplete = $false
-            $this.StartSuggestedAction()
-        }
-        else { $this.DebuggingComplete = $true }
     }
 
     [SessionDebug] Refresh() {
@@ -158,9 +166,9 @@ class SessionDebug {
             }
             
             $this.LooksHung = ($tbm.LastConnectionFailure -in (Get-ValidFailureReason)) -and
-                ($tbm.IsPhysical -eq $false)        -and
-                ($tbm.InMaintenanceMode -eq $false) -and
-                ($tbm.SessionsEstablished -eq 1)
+            ($tbm.IsPhysical -eq $false) -and
+            ($tbm.InMaintenanceMode -eq $false) -and
+            ($tbm.SessionsEstablished -eq 1)
             
             # DELETE THIS LATER - having trouble hanging sessions on purpose to troubleshoot
             if ($tbm.AssociatedUserUPNs -contains 'simmonsa@slhs.org' -and $tbm.SessionsEstablished -eq 1) {
@@ -377,9 +385,9 @@ class SessionDebug {
             try {
                 $nbhpaParams = @{
                     AdminAddress = $this.AdminAddress
-                    MachineName = $this.BrokerMachine.MachineName
-                    Action = 'Reset'
-                    ErrorAction = 'Stop'
+                    MachineName  = $this.BrokerMachine.MachineName
+                    Action       = 'Reset'
+                    ErrorAction  = 'Stop'
                 }
                 $this.ActionResult += (New-BrokerHostingPowerAction @nbhpaParams | Format-List | Out-String)
             }
@@ -491,7 +499,7 @@ function ConvertTo-FlatObject {
 }
 
 function Repair-Session {
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param (
         [Parameter(Mandatory, ValueFromPipeline)]
         [SessionDebug[]]
@@ -504,45 +512,60 @@ function Repair-Session {
         $MailFrom = 'SessionDebug_DoNotReply@slhs.org',
 
         [string]
-        $MailServer = 'mailgate.slhs.org',
+        $SmtpServer = 'mailgate.slhs.org',
 
         [int]
-        $TimeOut = (${script:TimeOut} + 10)
+        $TimeOut = (${script:TimeOut} + 10),
+
+        [switch]
+        $SuppressEmailNotification
     )
 
     process {
+        # debug/repair each session/VM
         foreach ($s in $Session) {
             $endBy = (Get-Date).AddSeconds($TimeOut)
             $s.Refresh()
 
-            do {
-                $s.StartSuggestedAction()
-                Start-Sleep -Seconds 5
-                [void] $s.Refresh()
-            }
-            until ($s.DebuggingComplete -or ((Get-Date) -gt $endBy))
+            $friendlyName = '{0}@{1}' -f $s.User, $s.DNSName
+            if ($PSCmdlet.ShouldProcess($friendlyName, 'REPAIR SESSION')) {
+                do {
+                    $s.StartSuggestedAction()
+                    Start-Sleep -Seconds 5
+                    [void] $s.Refresh()
+                }
+                until ($s.DebuggingComplete -or ((Get-Date) -gt $endBy))
 
-            # if we timed out, try one last action before bailing
-            if (-not $s.DebuggingComplete) {
-                $s.StartSuggestedAction()
-                [void] $s.Refresh()
+                # if we timed out, try one last action before bailing
+                if (-not $s.DebuggingComplete) {
+                    $s.StartSuggestedAction()
+                    [void] $s.Refresh()
+                }
+
+                $messageData = $s | ConvertTo-FlatObject | Out-String
+                Write-Information -MessageData $messageData
+                
+                if ($SuppressEmailNotification) { Write-Warning "Email notification disabled!" }
+                else {
+                    Write-Verbose "Sending email notification to: $MailTo"
+                    
+                    $mailProps = @('DNSName', 'User', 'AdminAddress', 'LooksHung', 'RestartIssued', 'SessionUid',
+                        'DebuggingComplete', 'JobReceived', 'JobState', 'ActionLog', 'ActionResult', 'OutFile', 'DebugInfo')
+                    $messageBody = $s | Select-Object -Property $mailProps | ConvertTo-FlatObject | Out-String
+                
+                    $smmParams = @{
+                        From       = $MailFrom
+                        To         = ($MailTo -split ',').Trim()
+                        SmtpServer = $SmtpServer
+                        Subject    = "Hung Session Repair Attempt: $($s.DNSName)"
+                        Body       = $messageBody
+                    }
+                    Send-MailMessage @smmParams
+                }
             }
         }
-        $mailProps = @('DNSName', 'User', 'AdminAddress', 'LooksHung', 'RestartIssued', 'SessionUid',
-            'DebuggingComplete', 'JobReceived', 'JobState', 'ActionLog', 'ActionResult', 'OutFile', 'DebugInfo')
-        $mailBody = $s | Select-Object -Property $mailProps | ConvertTo-FlatObject | Out-String
-
-        $smmParams = @{
-            From       = $MailFrom
-            To         = $MailTo
-            SmtpServer = $MailServer
-            Subject    = "Hung Session Repair Attempt: $($s.DNSName)"
-            Body       = $mailBody
-        }
-        Send-MailMessage @smmParams
     }
 }
-
 #endregion functions
 
 #region main
@@ -559,7 +582,16 @@ $hungSession = @(Get-HungSession -AdminAddress $AdminAddress -DesktopGroupName $
 
 # debug and repair hung sessions
 if ($hungSession) {
-    $sessionDebug = $hungSession.ForEach({[SessionDebug]::new($_.ControllerDNSName, $_.SessionUid, $OutFile, $TimeOut)})
-    $sessionDebug | Repair-Session
+    Write-Information -MessageData "Debugging $($hungSession.Count) hung sessions..."
+    $sessionDebug = $hungSession.ForEach({ [SessionDebug]::new($_.ControllerDNSName, $_.SessionUid, $OutFile, $TimeOut) })
+
+    $rsParams = @{
+        MailTo                    = $MailTo
+        MailFrom                  = $MailFrom
+        SmtpServer                = $SmtpServer
+        SuppressEmailNotification = $SuppressEmailNotification
+    }
+    $sessionDebug | Repair-Session @rsParams
 }
-else { "No hung sessions found." }
+else { Write-Information -MessageData "No hung sessions found. Nothing to do." }
+#endregion main
