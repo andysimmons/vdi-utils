@@ -30,8 +30,7 @@ param (
     [int]
     $TimeOut = 30,
 
-    [Parameter(HelpMessage = "Comma-separated list of email addresses (Ivanti's PS integration isn't great)")]
-    [MailAddress]
+    [MailAddress[]]
     $MailTo = 'simmonsa@slhs.org',
 
     [MailAddress]
@@ -571,11 +570,7 @@ function Repair-Session {
 #region main
 
 # load snapins
-try { Add-PSSnapin -Name $SnapIn -ErrorAction 'Stop' -PassThru }
-catch {
-    Write-Error "Couldn't load one or more required snap-ins. Bailing."
-    throw $_.Exception
-}
+Add-PSSnapin -Name $SnapIn -ErrorAction 'SilentlyContinue'
 
 # look for hung sessions
 $hungSession = @(Get-HungSession -AdminAddress $AdminAddress -DesktopGroupName $DesktopGroupName)
