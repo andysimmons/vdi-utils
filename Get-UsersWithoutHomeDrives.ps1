@@ -12,18 +12,16 @@ $homelessCount = 0
 # Clean up stale CSV if we have one
 if (Test-Path $OutFile) { Remove-Item $OutFile -Force -ErrorAction Stop }
 
-# Build some collections we can use to perform some analysis without re-querying remote resources again
-Write-Verbose "[$(Get-Date -f G)] Querying AD users (this might take a minute)..."
-
 # Clean up any previous jobs
 Get-Job -Name "HOMECHECK*" | Remove-Job -Force
 
 # Run the long/slow queries in parallel (as background jobs)
+Write-Verbose "[$(Get-Date -f G)] Querying AD users (this might take a minute)..."
 Start-Job -Name 'HOMECHECK-GeneralUsers' { Get-ADUser -SearchBase "OU=General Users,OU=Testing User GPOs,OU=SL1 Users,DC=SL1,DC=STLUKES-INT,DC=ORG" -Filter * } > $null
 Start-Job -Name 'HOMECHECK-Contractors' { Get-ADUser -SearchBase "OU=Contractors,OU=Testing User GPOs,OU=SL1 Users,DC=SL1,DC=STLUKES-INT,DC=ORG" -Filter * } > $null
 Start-Job -Name 'HOMECHECK-HomeDirs' { (Get-ChildItem "\\home.slhs.org\home\" -ErrorAction Stop).Name } > $null
 
-# Once the jobs finish, stuff the results into a few collections, and remove the jobs
+# Dump job output into collections we'll use to do analysis (without repeating expensive queries)
 Get-Job -Name "HOMECHECK*" | Wait-Job
 $generalUsers = Receive-Job -Name 'HOMECHECK-GeneralUsers'
 $contractors = Receive-Job -Name 'HOMECHECK-Contractors'
