@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$OutFile = "C:\Temp\NoHomeDriveUsers.csv"
+    [IO.FileInfo]
+    $OutFile = "C:\Temp\NoHomeDriveUsers.csv"
 )
 
 # Progress trackers
@@ -15,7 +16,7 @@ if (Test-Path $OutFile)
 }
 
 # Build some collections we can use to perform some analysis without re-querying remote resources again
-Write-Verbose "[$(Get-Date)] Querying AD users (this might take a minute)..."
+Write-Verbose "[$(Get-Date -f G)] Querying AD users (this might take a minute)..."
 
 # Run the long/slow queries in parallel (as background jobs)
 Get-Job -Name "HOMECHECK*" | Remove-Job -Force
@@ -55,7 +56,7 @@ else
 }
 
 $adUsers = $generalUsers + $contractors
-Write-Verbose "[$(get-date)] Analyzing $($adUsers.length) users..."
+Write-Verbose "[$(Get-Date -f G)] Analyzing $($adUsers.length) users..."
 
 
 foreach ($adUser in $adUsers)
@@ -95,4 +96,4 @@ If (Test-Path $OutFile) #If a report was created (or, rather, if any users w/o h
 
 $endDate = Get-Date
 $duration = $endDate - $startDate
-Write-Verbose "[$(Get-Date)] Execution Completed (Duration: $duration)"
+Write-Verbose "[$(Get-Date -f G)] Execution Completed (Duration: $duration)"
