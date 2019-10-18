@@ -169,11 +169,13 @@ class SessionDebug {
             ($tbm.InMaintenanceMode -eq $false) -and
             ($tbm.SessionsEstablished -eq 1)
             
+            <#
             # DELETE THIS LATER - having trouble hanging sessions on purpose to troubleshoot
             if ($tbm.AssociatedUserUPNs -contains 'simmonsa@slhs.org' -and $tbm.SessionsEstablished -eq 1) {
                 $this.LooksHung = $true
                 $this.DebuggingComplete = $false
             }
+            #>
 
             if ($this.LooksHung) { 
                 $this.SessionState = [SessionState]::Hung
@@ -336,7 +338,7 @@ class SessionDebug {
                         
                         # remove old dumps before creating another
                         Remove-Item -Path "$dir\*.dmp" -Confirm:$false -Force
-                        C:\Tools\Monitors\procdump64.exe -accepteula -W -ma ssomanhost64 "$of"
+                        C:\Tools\Monitors\procdump64.exe -accepteula -W -ma winlogon "$of"
                     }
                     catch {
                         # export and log the exception before throwing it back to the job invoker
@@ -445,6 +447,7 @@ function Get-HungSession {
     }
     # debugging workaround since I can't easily simulate a hung session, so we'll
     # also consider any session I'm connected to as "hung", regardless of last connection result.
+    <#
     $gbmParams.Filter = { AssociatedUserUPNs -contains 'simmonsa@slhs.org' }
     foreach ($a in $AdminAddress) {
         $gbmParams.AdminAddress = $a
@@ -457,6 +460,7 @@ function Get-HungSession {
             Write-Warning $_.Exception.Message
         }
     }
+    #>
 }
 
 function ConvertTo-FlatObject {
@@ -577,6 +581,11 @@ $hungSession = @(Get-HungSession -AdminAddress $AdminAddress -DesktopGroupName $
 
 # debug and repair hung sessions
 if ($hungSession) {
+
+    $delay = 60
+    Write-Information -MessageData "Pausing for $delay seconds to see if hung sessions clear up on their own..."
+    Start-Sleep -Seconds $delay
+
     Write-Information -MessageData "Debugging $($hungSession.Count) hung sessions..."
     $sessionDebug = $hungSession.ForEach({ [SessionDebug]::new($_.ControllerDNSName, $_.SessionUid, $OutFile, $TimeOut) })
 
