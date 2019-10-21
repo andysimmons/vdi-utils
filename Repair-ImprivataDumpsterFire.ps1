@@ -463,6 +463,22 @@ function Get-HungSession {
     #>
 }
 
+<#
+.SYNOPSIS
+    Joins multi-valued properties on an object into a delimited
+    string.
+
+.DESCRIPTION
+    Useful for reporting/summarizing certain collections in some
+    formats (exporting to text, CSV, etc) 
+
+.PARAMETER InputObject
+    Object(s) to flatten.
+
+.PARAMETER Delimiter
+    Delimiter used to distinguish between elements of a collection.
+#>
+
 function ConvertTo-FlatObject {
     param
     (
@@ -501,6 +517,39 @@ function ConvertTo-FlatObject {
     }
 }
 
+<#
+.SYNOPSIS
+    Repairs one or more sessions presumed to be hung.
+
+.DESCRIPTION
+    Automates the repair and email notification for one or more
+    SessionDebug objects. 
+
+.PARAMETER Session
+    SessionDebug object(s) to be repaired.
+
+.PARAMETER MailTo
+    Email notification recipient(s).
+
+.PARAMETER MailFrom
+    Email notification sender.
+
+.PARAMETER SmtpServer
+    Email notification SMTP server.
+
+.PARAMETER TimeOut
+    Number of seconds within which the recommended debugging actions must
+    complete before this function stops attempting to invoke the next
+    suggested action. 
+
+.PARAMETER SuppressEmailNotification
+    Repair sessions, but suppress all email notifications.
+
+.PARAMETER EnableSelfCorrectingNotification
+    Include email notifications even for sessions that self correct (i.e. a 
+    user successfully connects, and the session no longer appears to be hung)
+#>
+
 function Repair-Session {
     [CmdletBinding(SupportsShouldProcess)]
     param (
@@ -521,7 +570,10 @@ function Repair-Session {
         $TimeOut = (${script:TimeOut} + 10),
 
         [switch]
-        $SuppressEmailNotification
+        $SuppressEmailNotification,
+
+        [switch]
+        $EnableSelfCorrectingNotification
     )
 
     process {
@@ -548,9 +600,11 @@ function Repair-Session {
                 $messageData = $s | ConvertTo-FlatObject | Out-String
                 Write-Information -MessageData $messageData
                 
-                if ($SuppressEmailNotification) { Write-Warning "Email notification disabled!" }
-                else {
-                    Write-Verbose "Sending email notification to: $MailTo"
+                if ($SuppressEmailNotification) { 
+                    Write-Warning "Email notification disabled!" 
+                }
+                elseif ($s.LooksHung -or $EnableSelfCorrectingNotification) {
+                    Write-Verbose "Sending email notification to: $($MailTo -join ', ')"
                     
                     $mailProps = @('DNSName', 'User', 'AdminAddress', 'LooksHung', 'RestartIssued', 'SessionUid',
                         'DebuggingComplete', 'JobReceived', 'JobState', 'ActionLog', 'ActionResult', 'OutFile', 'DebugInfo')
