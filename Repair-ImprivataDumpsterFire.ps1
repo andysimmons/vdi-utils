@@ -31,7 +31,7 @@ param (
     $TimeOut = 30,
 
     [MailAddress[]]
-    $MailTo = 'simmonsa@slhs.org',
+    $MailTo = 'nobody@slhs.org',
 
     [MailAddress]
     $MailFrom = 'SessionDebug_DoNotReply@slhs.org',
