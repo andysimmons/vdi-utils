@@ -27,6 +27,7 @@
 .PARAMETER CAGPattern
     Pattern used to determine if the 'ConnectedViaHostName' property on a connection
     record matches a Citrix Access Gateway
+
 .PARAMETER MaxHourPerQuery
     Maximum number of hours (timespan) when querying the DDCs. There's probably a better
     way to throttle/paginate, but this works until I figure that out.
@@ -49,6 +50,11 @@ param (
     $MaxHoursPerQuery = '24'
 )
 
+#region functions
+<#
+.SYNOPSIS
+    Invokes a web request for JSON data and returns a .Net object
+#>
 function Invoke-JsonRequest {
     [CmdletBinding()]
     param(
@@ -83,9 +89,13 @@ function Invoke-JsonRequest {
     $result
 }
 
+<#
+.SYNOPSIS
+    Adds line(s) and whitespace before/after a string (for plain-text head "formatting")
+#>
 function Out-Header {
     [CmdletBinding()]
-    [OutputType([string])]
+    [OutputType([string[]])]
     param (
         [Parameter(Mandatory, ValueFromPipeline)]
         [string]$Header,
@@ -100,6 +110,11 @@ function Out-Header {
     }
 }
 
+<#
+.SYNOPSIS
+    Summarizes recent Citrix app/desktop connections, users, and endpoints over
+    a given date range.
+#>
 function Get-ConnectionsByDeviceLocation {
     [CmdletBinding()]
     param (
@@ -128,7 +143,7 @@ function Get-ConnectionsByDeviceLocation {
     $batchStop = $StartDateMax
     $totalHours = [math]::Round(($batchStop - $batchStart).TotalHours, 1)
     if ($totalHours -gt $MaxHoursPerQuery) {
-        Write-Warning "Date range specified is $totalHours hours. Splitting into $MaxHoursPerQuery hour batches."
+        Write-Warning "Date range specified is $totalHours hours. Splitting into $MaxHoursPerQuery-hour batches."
         $batchStop = $batchStart.AddHours($MaxHoursPerQuery)
     }
 
@@ -144,7 +159,10 @@ function Get-ConnectionsByDeviceLocation {
             'ConnectedViaHostName'
             'SessionKey'
             'Session/StartDate'
+            'Session/EndDate'
+            'Session/LogOnDuration'
             'Session/User/UserName'
+            'Session/User/Upn'
             'Session/Machine/HostedMachineName'
             'Session/Machine/HostingServerName'
             'Session/Machine/DesktopGroup/Name'
@@ -179,13 +197,17 @@ function Get-ConnectionsByDeviceLocation {
                 if ($r.ConnectedViaHostName -match $CAGPattern) { $epLocation = 'EXTERNAL' }
                 else { $epLocation = 'INTERNAL' }
         
+                # need to account for null timestamps, maybe put a session duration property here
                 [pscustomobject] [ordered] @{
                     UserName             = $r.Session.User.UserName
+                    UPN                  = $r.Session.User.Upn
                     CreatedDate          = $r.CreatedDate.ToLocalTime()
                     EndpointLocation     = $epLocation
                     EndpointName         = $r.ClientName
                     ConnectedViaHostName = $r.ConnectedViaHostName
                     SessionStart         = $r.Session.StartDate.ToLocalTime()
+                    #SessionEnd           = $r.Session.EndDate.ToLocalTime()
+                    #LogOnDuration        = $r.Session.LogOnDuration
                     DeliveryGroup        = $r.Session.Machine.DesktopGroup.Name
                     VMName               = $r.Session.Machine.HostedMachineName
                     VMHost               = $r.Session.Machine.HostingServerName
@@ -201,7 +223,9 @@ function Get-ConnectionsByDeviceLocation {
         if ($batchStop -gt $StartDateMax) { $batchStop = $startDateMax }
     }
 }
+#endregion functions
 
+#region main
 Write-Output "[$(Get-Date -f G)] Retrieving connections from $StartDateMin - $StartDateMax ..."
 $gcbdlParams = @{
     AdminAddress     = $AdminAddress
@@ -217,7 +241,8 @@ Write-Output "[$(Get-Date -f G)] Analyzing connections..."
 $connections = $connections | Sort-Object -Property 'UserName', 'SessionKey', 'CreatedDate'
 
 # eventually feed this into PowerBI, just getting some quick info
-Out-Header -Double "VDI Connections: $StartDateMin - $StartDateMax"
+$ddcList = $AdminAddress.ToUpper() -join ', '
+Out-Header -Double "$ddcList Connections: $StartDateMin - $StartDateMax"
 [pscustomobject] [ordered] @{
     TotalConnections = $connections.Count
     TotalSessions    = ($connections.SessionKey | Sort-Object -Unique).Count
@@ -240,3 +265,4 @@ foreach ($location in ($connections.EndpointLocation | Sort-Object -Unique)) {
         Sort-Object -Property 'Count' -Descending |
         Format-Table -AutoSize
 }
+#endregion main
