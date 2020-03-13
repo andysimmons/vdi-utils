@@ -35,7 +35,7 @@
 [CmdletBinding()]
 param (
     [string[]]
-    $AdminAddress = @('ctxddc01', 'sltctxddc01'),
+    $AdminAddress = @('ctxddc01', 'sltctxddc01', 'ctxxaddc01', 'sltctxxaddc01'),
 
     [datetime]
     $StartDateMin = (Get-Date).AddDays(-7),
