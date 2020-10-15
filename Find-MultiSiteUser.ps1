@@ -22,7 +22,7 @@ $aUsers = (Get-BrokerSession @gbsParams).UserUPN
 $gbsParams.AdminAddress = $SiteB
 $bUsers = (Get-BrokerSession @gbsParams).UserUPN
 
-$multiSiteUsers = $aUsers.Where( { $_ -in $bUsers } )
+$multiSiteUsers = $aUsers.Where( { ($_ -in $bUsers) -and ($null -ne $_) } )
 
 $aSite = Get-BrokerSite -AdminAddress $SiteA
 $bSite = Get-BrokerSite -AdminAddress $SiteB
